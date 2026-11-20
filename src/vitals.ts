@@ -11,6 +11,8 @@ export const reading = Schema.Struct({
   load: Schema.Finite,
   /** Percent of all cores, since the last reading. */
   cpu: Schema.Finite,
+  /** CPU over 90% for five minutes or more. */
+  cpuHot: Schema.optionalKey(Schema.Boolean),
   memoryPct: Schema.Finite,
   pressure: Schema.Literals(["normal", "warn", "critical"]),
   swapGb: Schema.Finite,
@@ -59,6 +61,22 @@ const PRESSURE: Record<string, Reading["pressure"]> = {
   "4": "critical",
 }
 
+const HOT_CPU = 90
+const HOT_FOR_NS = 5 * 60 * 1e9
+/** Since when the CPU has stayed over `HOT_CPU`, on the monotonic clock; null if it isn't. */
+let hotFrom: number | null = null
+
+/** Whether the CPU has stayed over 90% for five minutes, readings about a minute apart. */
+const sustained = (cpu: number) => {
+  const now = Bun.nanoseconds()
+  if (cpu <= HOT_CPU) {
+    hotFrom = null
+    return false
+  }
+  hotFrom ??= now
+  return now - hotFrom >= HOT_FOR_NS
+}
+
 export const read = async (machine: string): Promise<Reading> => {
   const [free, level, swap, batt] = await Promise.all([
     run(["memory_pressure", "-Q"]),
@@ -79,6 +97,7 @@ export const read = async (machine: string): Promise<Reading> => {
     cores: cpus().length,
     load: round(loadavg()[0] ?? 0),
     cpu: round(cpu),
+    cpuHot: sustained(cpu),
     memoryPct: 100 - freePct,
     pressure: PRESSURE[level.trim()] ?? "normal",
     swapGb: round(Number(used) / 1024),
@@ -88,15 +107,14 @@ export const read = async (machine: string): Promise<Reading> => {
 }
 
 const LOW_DISK_GB = 10
-
-/** What a glance at it should notice, worst first: pressure, a full disk, a flat battery, load. */
+/** What a glance at it should notice, worst first: critical pressure, a full disk, a flat battery, sustained CPU. */
 export const alerts = (r: Reading): readonly string[] => [
-  ...(r.pressure === "normal" ? [] : [`Memory ${r.pressure}`]),
+  ...(r.pressure === "critical" ? ["Memory critical"] : []),
   ...(r.diskFreeGb < LOW_DISK_GB ? [`${r.diskFreeGb.toFixed(0)} GB free`] : []),
   ...(r.battery !== undefined && r.battery.onBattery && r.battery.pct <= 15
     ? [`Battery ${r.battery.pct}%`]
     : []),
-  ...(r.load > r.cores * 1.5 ? ["Overloaded"] : []),
+  ...(r.cpuHot === true ? ["CPU busy"] : []),
 ]
 
 /** A change worth an event between the regular ones: a new alert, or the power plugged or pulled. */
