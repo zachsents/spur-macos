@@ -16,6 +16,7 @@ import { load, noteDisk } from "./load.ts"
 import { askedField, guard, guardExec, marked } from "./personal.ts"
 import { check, grants } from "./protected.ts"
 import * as strays from "./strays.ts"
+import { diskEvents, diskTool, makeRoomTool, watchDisk } from "./upkeep.ts"
 import { alerts, notable, read, reading } from "./vitals.ts"
 import type { Reading } from "./vitals.ts"
 
@@ -262,10 +263,13 @@ const watchStrays = Effect.gen(function* watching() {
 })
 
 /** What this spur does on its own while it runs. */
-export const watch = Effect.all([watchAttention, watchVitals, watchPermissions, watchStrays], {
-  concurrency: "unbounded",
-  discard: true,
-})
+export const watch = Effect.all(
+  [watchAttention, watchVitals, watchPermissions, watchStrays, watchDisk],
+  {
+    concurrency: "unbounded",
+    discard: true,
+  },
+)
 
 // Tools.
 
@@ -732,8 +736,10 @@ export const macosApp = defineApp({
     straysTool,
     sweepStrays,
     keepRunning,
+    diskTool,
+    makeRoomTool,
   ],
-  events: [Vitals, Attention, Permissions, StraysStopped],
+  events: [Vitals, Attention, Permissions, StraysStopped, ...diskEvents],
   widgets: [
     {
       name: "vitals",
