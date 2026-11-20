@@ -13,6 +13,7 @@ import { Effect, Schema } from "effect"
 import { AppEvents, answer, defineApp, defineEvent, HOME, SWITCH_CATALOG, tool } from "spur-kit"
 import { capture, hands } from "./hands.ts"
 import { load, noteDisk } from "./load.ts"
+import { askedField, guard, guardExec, marked } from "./personal.ts"
 import { check, grants } from "./protected.ts"
 import * as strays from "./strays.ts"
 import { alerts, notable, read, reading } from "./vitals.ts"
@@ -278,20 +279,25 @@ const clipOutput = (text: string) =>
 const exec = tool(
   "exec",
   {
-    description:
-      "Run a shell command on this Mac (zsh, login environment), in its own process group: a timeout stops everything it started. Output is its head and tail when long.",
+    description: marked(
+      "Run a shell command on this Mac (zsh, login environment), in its own process group: a timeout stops everything it started. Output is its head and tail when long. Files move between machines with rsync or scp over ssh, from whichever machine reaches the other.",
+      "heavy commands (builds, tests, Blender, ffmpeg, simulators) are",
+    ),
     input: Schema.Struct({
       command: Schema.String,
       cwd: Schema.optionalKey(Schema.String),
       timeout_s: Schema.optionalKey(Schema.Finite),
       env: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+      ...askedField,
     }),
   },
   (input) =>
     task(async () => {
       const started = Date.now()
-      const proc = Bun.spawn(["/bin/zsh", "-lc", input.command], {
-        cwd: expand(input.cwd ?? "~"),
+      const cwd = expand(input.cwd ?? "~")
+      const command = guardExec(input.command, cwd, input)
+      const proc = Bun.spawn(["/bin/zsh", "-lc", command], {
+        cwd,
         env: { ...process.env, ...input.env, SWITCH_EXEC: crypto.randomUUID() },
         stdin: "ignore",
         stdout: "pipe",
@@ -578,12 +584,15 @@ const onScreen = tool(
 const ui = tool(
   "ui",
   {
-    description:
+    description: marked(
       'Drive any app on this Mac through Accessibility: one step {op, app?, match?: {role?, text?}, index?, …} or {app?, steps: [step, …]}, stopping at the first that fails. Ops: tree {depth?}, find, press, set {attribute? (AXValue), value}, focus, keys {keys: "cmd+shift+g"}, type {text}, wait {timeout_ms?, gone?}. `app` is a name or bundle id, the front one if left out.',
+      "driving its apps is",
+    ),
     input: Schema.Record(Schema.String, Schema.Unknown),
   },
   (input) =>
     task(async () => {
+      guard("drive its apps", input)
       const keyed = /"op":"(?:keys|type)"/u.test(JSON.stringify(input))
       const result = await hands("ui", input)
       if (keyed) {
@@ -596,16 +605,20 @@ const ui = tool(
 const open = tool(
   "open",
   {
-    description:
+    description: marked(
       "Open a URL (System Settings panes too), with an app if given; or an app; or show a path in Finder (`reveal`).",
+      "opening things in front of the user is",
+    ),
     input: Schema.Struct({
       url: Schema.optionalKey(Schema.String),
       app: Schema.optionalKey(Schema.String),
       reveal: Schema.optionalKey(Schema.String),
+      ...askedField,
     }),
   },
   (input) =>
     task(async () => {
+      guard("open things in front of them", input)
       const opened: string[] = []
       if (input.url !== undefined || input.app !== undefined) {
         const argv = ["open"]

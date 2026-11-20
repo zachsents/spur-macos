@@ -8,7 +8,7 @@
         "@effect/platform-bun": "4.1.4",
         "@modelcontextprotocol/server": "^2.4.0",
         "effect": "^4.1.5",
-        "spur-kit": "github:zachsents/spur-kit#5206d35",
+        "spur-kit": "github:zachsents/spur-kit#08c8f74",
       },
       "devDependencies": {
         "@types/bun": "^1.4.5",
@@ -289,7 +289,7 @@
 
     "source-map-js": ["source-map-js@1.2.4", "", {}, "sha512-J7ZjMvHd9O1fcT/5V09QWaaSl2BbWx3F6O08spde82Namf9UB0GxRVIPiNbVsdKkoizHiSpTodo3vp2bAy91MA=="],
 
-    "spur-kit": ["spur-kit@github:zachsents/spur-kit#5206d35", { "dependencies": { "@modelcontextprotocol/server": "^2.4.0" }, "peerDependencies": { "effect": "^4.1.4" } }, "zachsents-spur-kit-5206d35", "sha512-nHPz6suqpoDLu+nGe78BjfaxuQwj09Q9MsKpTA+4BIrUr1odVJhFfFj6+mNNrJLc1I53MFP4pTAZvNu5Wjmm4w=="],
+    "spur-kit": ["spur-kit@github:zachsents/spur-kit#08c8f74", { "dependencies": { "@modelcontextprotocol/server": "^2.4.0" }, "peerDependencies": { "effect": "^4.1.4" } }, "zachsents-spur-kit-08c8f74", "sha512-zg1gAonE5KMenyVIdY7J1TsNSi6/rSp77rv/LSIa3GCGYoAQFtShpSLMXXGISzdHspwzkcrXKcyvhKpelJx4lw=="],
 
     "string-width": ["string-width@8.3.0", "", { "dependencies": { "get-east-asian-width": "^1.5.0", "strip-ansi": "^7.1.2" } }, "sha512-ZbmZM0JCihQN91dWnxoipT2KOEyHqEyfRXUyjuRhW8b/xnqPDoq4gWEVApTVa9db2wN8mmoikgFBbjh71+cGeQ=="],
 
