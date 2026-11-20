@@ -106,6 +106,8 @@ const TOOL_CACHES: readonly ToolCache[] = [
   { name: "Homebrew's downloads", path: "Library/Caches/Homebrew", users: ["brew"] },
   { name: "Go's build cache", path: "Library/Caches/go-build", users: ["go"] },
   { name: "SwiftPM's cache", path: "Library/Caches/org.swift.swiftpm", users: ["swift-build"] },
+  { name: "sccache's cache", path: "Library/Caches/Mozilla.sccache", users: ["sccache"] },
+  { name: "Codex's cache", path: "Library/Caches/Codex" },
 ]
 
 /** Big things that come back only by hand: measured, never cleared (simulators aside). */
