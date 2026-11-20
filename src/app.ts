@@ -16,6 +16,8 @@ import { load, noteDisk } from "./load.ts"
 import { askedField, guard, guardExec, marked } from "./personal.ts"
 import { check, grants } from "./protected.ts"
 import * as strays from "./strays.ts"
+import { Device, moreTools, watchDevice, watchServices } from "./more.ts"
+import * as procs from "./procs.ts"
 import { diskEvents, diskTool, makeRoomTool, watchDisk } from "./upkeep.ts"
 import { alerts, notable, read, reading } from "./vitals.ts"
 import type { Reading } from "./vitals.ts"
@@ -264,7 +266,15 @@ const watchStrays = Effect.gen(function* watching() {
 
 /** What this spur does on its own while it runs. */
 export const watch = Effect.all(
-  [watchAttention, watchVitals, watchPermissions, watchStrays, watchDisk],
+  [
+    watchAttention,
+    watchVitals,
+    watchPermissions,
+    watchStrays,
+    watchDisk,
+    watchDevice,
+    watchServices,
+  ],
   {
     concurrency: "unbounded",
     discard: true,
@@ -284,7 +294,7 @@ const exec = tool(
   "exec",
   {
     description: marked(
-      "Run a shell command on this Mac (zsh, login environment), in its own process group: a timeout stops everything it started. Output is its head and tail when long. Files move between machines with rsync or scp over ssh, from whichever machine reaches the other.",
+      "Run a shell command on this Mac (zsh, login environment), in its own process group: a timeout stops everything it started, and so does cancel. A long-running process (a dev server) is a service: start. Output is its head and tail when long. Files move between machines with rsync or scp over ssh, from whichever machine reaches the other.",
       "heavy commands (builds, tests, Blender, ffmpeg, simulators) are",
     ),
     input: Schema.Struct({
@@ -300,13 +310,19 @@ const exec = tool(
       const started = Date.now()
       const cwd = expand(input.cwd ?? "~")
       const command = guardExec(input.command, cwd, input)
+      const id = crypto.randomUUID()
       const proc = Bun.spawn(["/bin/zsh", "-lc", command], {
         cwd,
-        env: { ...process.env, ...input.env, SWITCH_EXEC: crypto.randomUUID() },
+        env: { ...process.env, ...input.env, SWITCH_EXEC: id },
         stdin: "ignore",
         stdout: "pipe",
         stderr: "pipe",
         detached: true,
+      })
+      procs.began(id.slice(0, 8), input.command, proc.pid)
+      void proc.exited.then((code) => {
+        procs.ended(id.slice(0, 8))
+        return code
       })
       const limit = Math.min(Math.max(1, input.timeout_s ?? 120), 3600) * 1000
       let timedOut = false
@@ -738,8 +754,9 @@ export const macosApp = defineApp({
     keepRunning,
     diskTool,
     makeRoomTool,
+    ...moreTools,
   ],
-  events: [Vitals, Attention, Permissions, StraysStopped, ...diskEvents],
+  events: [Vitals, Attention, Permissions, StraysStopped, ...diskEvents, Device],
   widgets: [
     {
       name: "vitals",

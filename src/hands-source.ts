@@ -270,6 +270,66 @@ func windows(_ pid: Int) -> [[String: Any]] {
   }
 }
 
+// macOS asking the person something on screen: privacy and network prompts, the Accessibility
+// warning. The same process shows "<app> quit unexpectedly", which asks nobody anything.
+let prompters = ["UserNotificationCenter", "universalAccessAuthWarn"]
+
+func words(_ e: AXUIElement, _ depth: Int, _ out: inout [String], _ buttons: inout [AXUIElement]) {
+  let role = text(e, "AXRole") ?? ""
+  if role == "AXStaticText", let v = valueText(e), !v.isEmpty { out.append(v) }
+  if role == "AXButton" { buttons.append(e) }
+  if depth > 0 { for c in children(e) { words(c, depth - 1, &out, &buttons) } }
+}
+
+func crashed(_ lines: [String]) -> String? {
+  for line in lines {
+    for tail in [" quit unexpectedly", " quit while reopening windows"] {
+      if let r = line.range(of: tail) {
+        let name = line[..<r.lowerBound].trimmingCharacters(in: CharacterSet(charactersIn: " \u{201C}\u{201D}\""))
+        if !name.isEmpty { return name }
+      }
+    }
+  }
+  return nil
+}
+
+/// The prompts waiting on screen, each with its words; crash dialogs answered with Ignore when
+/// dismiss, and the apps that crashed.
+func prompts(_ dismiss: Bool) -> [String: Any] {
+  let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] ?? []
+  var pids = Set<Int>()
+  var windows = 0
+  for w in list {
+    if let o = w[kCGWindowOwnerName as String] as? String, prompters.contains(o) {
+      windows += 1
+      if let p = w[kCGWindowOwnerPID as String] as? Int { pids.insert(p) }
+    }
+  }
+  var waiting: [[String: Any]] = []
+  var dismissed: [String] = []
+  if !AXIsProcessTrusted() { return ["windows": windows, "waiting": waiting, "dismissed": dismissed, "trusted": false] }
+  for pid in pids {
+    let root = AXUIElementCreateApplication(pid_t(pid))
+    let owner = NSRunningApplication(processIdentifier: pid_t(pid))?.localizedName ?? ""
+    let wins = (attribute(root, "AXWindows") as? [AXUIElement]) ?? []
+    for win in wins {
+      var lines: [String] = []
+      var buttons: [AXUIElement] = []
+      words(win, 8, &lines, &buttons)
+      let names = buttons.map { text($0, "AXTitle") ?? "" }
+      if dismiss, let app = crashed(lines),
+         let i = ["Ignore", "OK", "Close", "Cancel"].lazy.compactMap({ want in names.firstIndex { $0.caseInsensitiveCompare(want) == .orderedSame } }).first {
+        if AXUIElementPerformAction(buttons[i], "AXPress" as CFString) == .success {
+          dismissed.append(app)
+          continue
+        }
+      }
+      waiting.append(["owner": owner, "words": Array(lines.prefix(6)), "buttons": names])
+    }
+  }
+  return ["windows": windows, "waiting": waiting, "dismissed": dismissed, "trusted": true]
+}
+
 func step(_ s: [String: Any], _ defaultApp: String?) throws -> Any {
   guard let op = s["op"] as? String else { throw fail("a step needs op: tree, find, press, set, focus, keys, type, wait") }
   if !AXIsProcessTrusted() { throw fail("No Accessibility permission") }
@@ -354,6 +414,7 @@ do {
   case "focused": emit(focused(pid_t(args["pid"] as? Int ?? 0)))
   case "ui": emit(try ui(args))
   case "windows": emit(windows(args["pid"] as? Int ?? 0))
+  case "prompts": emit(prompts(args["dismiss"] as? Bool ?? false))
   case "open-screen":
     try openScreen()
     emit(["locked": locked()])
@@ -361,7 +422,7 @@ do {
     emit(["locked": locked(), "password": passwordSetting() ?? NSNull()])
   case "access":
     emit(["accessibility": AXIsProcessTrusted(), "screenRecording": CGPreflightScreenCaptureAccess()])
-  default: throw fail("ops: glance, focused, ui, windows, open-screen, lock, access")
+  default: throw fail("ops: glance, focused, ui, windows, prompts, open-screen, lock, access")
   }
 } catch let e as Failure {
   emit(["error": e.message])

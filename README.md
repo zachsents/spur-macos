@@ -1,6 +1,6 @@
 # spur-macos
 
-A Mac as the agent's body: shell commands, files, vitals and load, attention and the moment, screenshots and driving any app's interface (a Swift helper does Accessibility and input), plus upkeep: stray processes, protected folders. One runs on every Mac. Widgets: vitals and a glance at the screen, in Home.
+A Mac as the agent's body: shell commands, services and files, vitals and load, what the Mac is (sleep, automation grants, prompts waiting), attention and the moment, screenshots and driving any app's interface (a Swift helper does Accessibility and input), plus upkeep: the disk (what holds it, sweeps, make_room, a low-disk forecast), stray processes, protected folders. On the user's own laptop (its host provides `personal`) it refuses heavy commands and driving apps unless they asked. One runs on every Mac. Widgets: vitals and a glance at the screen, in Home.
 
 A [Switch](https://switch.ax) spur, built on [spur-kit](https://github.com/zachsents/spur-kit).
 
