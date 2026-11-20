@@ -11,6 +11,7 @@ import path from "node:path"
 import { Effect, Schema } from "effect"
 
 import { AppEvents, answer, defineApp, defineEvent, HOME, SWITCH_CATALOG, tool } from "spur-kit"
+import { decode } from "./barcodes.ts"
 import { capture, hands } from "./hands.ts"
 import { load, noteDisk } from "./load.ts"
 import { askedField, guard, guardExec, marked } from "./personal.ts"
@@ -539,6 +540,21 @@ const moment = tool(
     }),
 )
 
+const barcodes = tool(
+  "barcodes",
+  {
+    description:
+      "Every barcode (QR, Aztec, PDF417, Code 128, Data Matrix, EAN/UPC…) on a ticket, boarding pass, bib or flyer: an image or PDF (a path on this Mac, a URL or a data: URL), or a Wallet pass's own. Each code's exact text, and `wallet`, the barcode for a Wallet pass as it is (format, message, encoding) when Wallet can draw its kind.",
+    readOnly: true,
+    input: Schema.Struct({ source: Schema.String }),
+  },
+  (input) =>
+    task(async () => {
+      const found = await decode(input.source.trim())
+      return found
+    }),
+)
+
 const screenshot = tool(
   "screenshot",
   {
@@ -720,6 +736,7 @@ export const macosApp = defineApp({
     writeFileTool,
     listFiles,
     statFile,
+    barcodes,
     vitals,
     loadTool,
     attention,
