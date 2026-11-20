@@ -728,6 +728,12 @@ export const macosApp = defineApp({
       surfaces: ["space"],
       resource: "ui://macos/vitals",
       space: HOME,
+      size: {
+        aspect: "auto",
+        min: { cols: 2, rows: 1 },
+        preferred: { cols: 4, rows: 1 },
+        grows: true,
+      },
       tool: "vitals",
       refresh: [Vitals.type],
       a2ui: () => [

@@ -18,7 +18,7 @@
     "@effect/platform-bun": "4.1.4",
     "@modelcontextprotocol/server": "^2.4.0",
     "effect": "^4.1.5",
-    "spur-kit": "github:zachsents/spur-kit"
+    "spur-kit": "github:zachsents/spur-kit#4e6598b"
   },
   "devDependencies": {
     "@types/bun": "^1.4.5",
