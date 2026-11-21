@@ -2,7 +2,7 @@
 // (profile.ts), what the Mac is (device.ts), and opening a privacy pane for the user.
 import { Effect, Schema } from "effect"
 
-import { AppEvents, defineEvent, tool } from "spur-kit"
+import { AppEvents, defineEvent, tool } from "switch-ext-kit"
 import * as device from "./device.ts"
 import * as procs from "./procs.ts"
 import { profile } from "./profile.ts"
@@ -106,7 +106,7 @@ const requestAccess = tool(
   "request_access",
   {
     description:
-      "Open System Settings at a privacy permission's page on this Mac, for the user to turn it on for the app this spur runs under (Switch Host): accessibility, screen recording, full disk access, automation, microphone, camera, input monitoring, location or local network. The switch is theirs to flip.",
+      "Open System Settings at a privacy permission's page on this Mac, for the user to turn it on for the app this extension runs under (Switch Host): accessibility, screen recording, full disk access, automation, microphone, camera, input monitoring, location or local network. The switch is theirs to flip.",
     input: Schema.Struct({
       permission: Schema.Literals([
         "accessibility",

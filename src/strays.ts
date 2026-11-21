@@ -3,7 +3,7 @@
 // A stray is a process of this user left to launchd (its parent is pid 1), not a launchd job,
 // with no terminal, not macOS's or an app's; with what it started, it's one unit. By kind:
 // - claude-shell: a Claude Code Bash shell whose session is gone. Stopped SHELL_GONE after.
-// - exec: started by this spur's exec (SWITCH_EXEC), like a dev server. Stopped once it's run
+// - exec: started by this extension's exec (SWITCH_EXEC), like a dev server. Stopped once it's run
 //   WORK_IDLE and nothing is connected to it.
 // - leftover: what nobody keeps on purpose (log stream, tail -f, a headless browser, a screen
 //   recording). Stopped LEFTOVER after it's first seen.

@@ -40,7 +40,7 @@ export const facts = Schema.Struct({
   lastSleep: Schema.optionalKey(Schema.String),
   lastWake: Schema.optionalKey(Schema.String),
   bootedAt: Schema.optionalKey(Schema.String),
-  /** Each app this Mac's spurs asked to script, and whether they may; absent without Full Disk Access. */
+  /** Each app this Mac's extensions asked to script, and whether they may; absent without Full Disk Access. */
   automation: Schema.optionalKey(Schema.Record(Schema.String, Schema.Boolean)),
   /** macOS prompts on screen nobody has answered. */
   promptsWaiting: Schema.Finite,

@@ -1,6 +1,6 @@
 // The Swift helper's source, compiled on the Mac that runs it (hands.ts). A raw string keeps its
 // backslashes; it holds no backtick and no dollar-brace.
-export const source = String.raw`// The macOS spur's hands: what needs Accessibility, CoreGraphics or AppKit, one call per run.
+export const source = String.raw`// The macOS extension's hands: what needs Accessibility, CoreGraphics or AppKit, one call per run.
 // "hands <op> [json]" prints one JSON value, or {"error": ...} and exits 1. Ported from Switchboard's
 // sb-macos (ax.rs, ui.rs, screen.rs). Accessibility and Screen Recording are the signed host app's,
 // which this runs under.

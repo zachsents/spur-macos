@@ -1,11 +1,11 @@
-// On the user's own laptop (its host provides `personal`), this spur doesn't drive its apps, open
-// things in front of the user or run heavy commands for the agent, unless the call carries
+// On the user's own laptop (its host provides `personal`), this extension doesn't drive its apps,
+// open things in front of the user or run heavy commands for the agent, unless the call carries
 // `person_asked`: the user's words asking for exactly that on this Mac. Ported from Switchboard's
 // macOS appendage (personal.rs).
 import path from "node:path"
 import { Schema } from "effect"
 
-import { asked, heavy, PERSON_ASKED, personal, refusal, standIns } from "spur-kit"
+import { asked, heavy, PERSON_ASKED, personal, refusal, standIns } from "switch-ext-kit"
 
 export const here = personal()
 

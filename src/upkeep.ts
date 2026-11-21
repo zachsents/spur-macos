@@ -1,11 +1,11 @@
-// The disk as this spur watches it: the census every six hours, what each piece of work's build
-// folders hold every ten minutes, and a forecast that says, a day or two ahead, when it'll be low
-// and what grew. Each is an event, so triage can wake a turn on a disk about to fill. Nothing is
-// deleted unless `make_room` is called.
+// The disk as this extension watches it: the census every six hours, what each piece of work's
+// build folders hold every ten minutes, and a forecast that says, a day or two ahead, when it'll be
+// low and what grew. Each is an event, so triage can wake a turn on a disk about to fill. Nothing
+// is deleted unless `make_room` is called.
 import path from "node:path"
 import { Effect, Schema } from "effect"
 
-import { AppEvents, defineEvent, tool } from "spur-kit"
+import { AppEvents, defineEvent, tool } from "switch-ext-kit"
 import { census, free, GB, outlook } from "./disk.ts"
 import { byHolder, byWork, freedOf, makeRoom, scan } from "./sweeps.ts"
 import type { ByWork, Cleared, Swept } from "./sweeps.ts"
@@ -106,7 +106,7 @@ const takeCensus = async () => {
   return latest
 }
 
-/** The disk's watch, while the spur runs. */
+/** The disk's watch, while the extension runs. */
 export const watchDisk = Effect.gen(function* watching() {
   const events = yield* AppEvents
   const emit = (e: Parameters<typeof events.emit>[0]) => events.emit(e).pipe(Effect.ignore)

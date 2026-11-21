@@ -1,7 +1,7 @@
-// The macOS spur as a stdio MCP server: what a host runs, from this Mac's spur folder.
+// The macOS extension as a stdio MCP server: what a host runs, from this Mac's extension folder.
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio"
 import { BunRuntime } from "@effect/platform-bun"
-import { AppEvents, Models, serve } from "spur-kit"
+import { AppEvents, Models, serve } from "switch-ext-kit"
 import { Effect, Layer } from "effect"
 
 import { macosApp, watch } from "./app.ts"

@@ -10,7 +10,7 @@ import { homedir, hostname } from "node:os"
 import path from "node:path"
 import { Effect, Schema } from "effect"
 
-import { AppEvents, answer, defineApp, defineEvent, SWITCH_CATALOG, tool } from "spur-kit"
+import { AppEvents, answer, defineApp, defineEvent, SWITCH_CATALOG, tool } from "switch-ext-kit"
 import { decode } from "./barcodes.ts"
 import { capture, hands } from "./hands.ts"
 import { load, noteDisk } from "./load.ts"
@@ -115,7 +115,7 @@ const history: Glance[] = []
 let posted = 0
 let person: number | null = null
 
-/** Seconds since the user's last input, not counting keys this spur posted for the agent. */
+/** Seconds since the user's last input, not counting keys this extension posted for the agent. */
 const idleOf = (idle: number) => {
   const latest = Date.now() - idle * 1000
   const own = posted > 0 && Math.abs(latest - posted) <= OWN_INPUT_MS
@@ -265,7 +265,7 @@ const watchStrays = Effect.gen(function* watching() {
   }
 })
 
-/** What this spur does on its own while it runs. */
+/** What this extension does on its own while it runs. */
 export const watch = Effect.all(
   [watchAttention, watchVitals, watchPermissions, watchStrays, watchDisk, watchDevice],
   {
