@@ -1,12 +1,9 @@
-// The rest of the Mac's tools: execs under way and services (procs.ts), what a process costs
+// The rest of the Mac's tools: execs under way (procs.ts), what a process costs
 // (profile.ts), what the Mac is (device.ts), and opening a privacy pane for the user.
-import { homedir } from "node:os"
-import path from "node:path"
 import { Effect, Schema } from "effect"
 
 import { AppEvents, defineEvent, tool } from "spur-kit"
 import * as device from "./device.ts"
-import { askedField, guardExec } from "./personal.ts"
 import * as procs from "./procs.ts"
 import { profile } from "./profile.ts"
 
@@ -14,8 +11,6 @@ const machine = process.env.SWITCH_MACHINE ?? "mac"
 
 const task = <A>(f: () => Promise<A>) =>
   Effect.tryPromise({ try: f, catch: (e) => (e instanceof Error ? e : new Error(String(e))) })
-
-const expand = (p: string) => (p.startsWith("~") ? path.join(homedir(), p.slice(1)) : p)
 
 export const Device = defineEvent("macos.device", 1, device.facts)
 
@@ -60,14 +55,6 @@ export const watchDevice = Effect.gen(function* watching() {
   }
 })
 
-/** Services asked to keep running, started again when they die. */
-export const watchServices = Effect.gen(function* watching() {
-  for (;;) {
-    yield* Effect.sync(procs.keepUp)
-    yield* Effect.sleep("30 seconds")
-  }
-})
-
 const deviceTool = tool(
   "device",
   {
@@ -86,72 +73,6 @@ const cancelTool = tool(
     input: Schema.Struct({ id: Schema.optionalKey(Schema.String) }),
   },
   (input) => task(async () => await Promise.resolve(procs.cancel(input.id))),
-)
-
-const servicesTool = tool(
-  "services",
-  {
-    description:
-      "The long-running processes started on this Mac with start: each one's command, folder, whether it runs (pid, since), whether it's restarted when it dies, and its log.",
-    readOnly: true,
-  },
-  () => task(async () => await Promise.resolve(procs.list())),
-)
-
-const startTool = tool(
-  "start",
-  {
-    description:
-      "Start a long-running process on this Mac (a dev server, a watcher) as a named service, in its own process group, its output in a log, kept across this spur's restarts; with `restart`, started again when it dies. Without command, starts one stopped before. Heavy commands are refused on the user's own laptop unless they asked (person_asked).",
-    input: Schema.Struct({
-      name: Schema.String,
-      command: Schema.optionalKey(Schema.String),
-      cwd: Schema.optionalKey(Schema.String),
-      env: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
-      restart: Schema.optionalKey(Schema.Boolean),
-      ...askedField,
-    }),
-  },
-  (input) =>
-    task(async () => {
-      const cwd = expand(input.cwd ?? "~")
-      const command = input.command === undefined ? undefined : guardExec(input.command, cwd, input)
-      return await Promise.resolve(
-        procs.start({
-          name: input.name,
-          cwd,
-          ...(command !== undefined && { command }),
-          ...(input.env && { env: input.env }),
-          ...(input.restart !== undefined && { restart: input.restart }),
-        }),
-      )
-    }),
-)
-
-const stopTool = tool(
-  "stop",
-  {
-    description:
-      "Stop a service on this Mac (TERM, then KILL after 10 s) until it's started again; `forget` drops it.",
-    input: Schema.Struct({ name: Schema.String, forget: Schema.optionalKey(Schema.Boolean) }),
-  },
-  (input) => task(async () => await procs.stop(input.name, input.forget === true)),
-)
-
-const restartTool = tool(
-  "restart",
-  { description: "Restart a service on this Mac.", input: Schema.Struct({ name: Schema.String }) },
-  (input) => task(async () => await procs.restart(input.name)),
-)
-
-const logsTool = tool(
-  "logs",
-  {
-    description: "The end of a service's log on this Mac (100 lines by default).",
-    readOnly: true,
-    input: Schema.Struct({ name: Schema.String, lines: Schema.optionalKey(Schema.Finite) }),
-  },
-  (input) => task(async () => await Promise.resolve(procs.logs(input.name, input.lines ?? 100))),
 )
 
 const profileTool = tool(
@@ -210,14 +131,4 @@ const requestAccess = tool(
     }),
 )
 
-export const moreTools = [
-  deviceTool,
-  cancelTool,
-  servicesTool,
-  startTool,
-  stopTool,
-  restartTool,
-  logsTool,
-  profileTool,
-  requestAccess,
-]
+export const moreTools = [deviceTool, cancelTool, profileTool, requestAccess]

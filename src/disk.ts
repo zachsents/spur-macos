@@ -1,10 +1,10 @@
 // Where the disk goes, ported from Switchboard's sb-macos (disk.rs). A Mac's disk fills with what
 // tools keep (a package manager's download cache keeps every version it fetched), build folders,
 // simulators, toolchains and models, and each was found only once the disk was all but full. So
-// every six hours it takes a census of what holds the disk and trims a tool cache grown past 10 GB;
-// every hour it reads the free space, and from three days of readings says how fast it's falling
-// and in how many days it'll be low. What grew between censuses counts what the sweeps cleared of
-// it meanwhile, so a build folder built and swept between two still shows as grown.
+// every six hours it takes a census of what holds the disk; every hour it reads the free space, and
+// from three days of readings says how fast it's falling and in how many days it'll be low. What
+// grew between censuses counts what make_room cleared of it meanwhile, so a build folder built and
+// cleared between two still shows as grown.
 import { existsSync, readdirSync, readFileSync, rmSync, statfsSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import path from "node:path"
@@ -19,12 +19,10 @@ const TREND = 3 * DAY
 const TREND_LEAST = DAY
 const SAMPLES_LEAST = 4
 const FALLING_LEAST = GB
-/** A tool cache past this is trimmed at the census, whatever the free space. */
-const CAP = 10 * GB
-/** Free space under which a sweep runs. */
-export const LOW = 20 * GB
-/** Free space under which recent build folders may go too. */
-export const CRITICAL = 10 * GB
+/** Free space under which the disk is low. */
+const LOW = 20 * GB
+/** Free space under which it's critical. */
+const CRITICAL = 10 * GB
 const WARN_DAYS = 2
 const WARN_AGAIN = DAY
 const GREW_LEAST = GB
@@ -106,17 +104,14 @@ const TOOL_CACHES: readonly ToolCache[] = [
   { name: "Homebrew's downloads", path: "Library/Caches/Homebrew", users: ["brew"] },
   { name: "Go's build cache", path: "Library/Caches/go-build", users: ["go"] },
   { name: "SwiftPM's cache", path: "Library/Caches/org.swift.swiftpm", users: ["swift-build"] },
-  { name: "sccache's cache", path: "Library/Caches/Mozilla.sccache", users: ["sccache"] },
-  { name: "Codex's cache", path: "Library/Caches/Codex" },
   {
     name: "Puppeteer's browsers",
     path: ".cache/puppeteer",
     users: ["chrome-headless-shell", "Google Chrome for Testing"],
   },
-  { name: "Chrome's cache", path: "Library/Caches/Google/Chrome" },
 ]
 
-/** Big things that come back only by hand: measured, never cleared (simulators aside). */
+/** Big things that come back only by hand: measured, never cleared. */
 const KEPT: readonly (readonly [string, string])[] = [
   ["iOS simulators", "Library/Developer/CoreSimulator/Devices"],
   ["Xcode's device support", "Library/Developer/Xcode/iOS DeviceSupport"],
@@ -130,13 +125,12 @@ const KEPT: readonly (readonly [string, string])[] = [
 ]
 
 export const BUILD_FOLDERS = "build folders"
-export const SIMULATORS = "iOS simulators"
 
 export interface Holder {
   readonly name: string
   readonly path?: string
   readonly bytes: number
-  /** Whether a sweep clears it. */
+  /** Whether make_room clears it. */
   readonly clears: boolean
 }
 
@@ -193,15 +187,10 @@ export interface Census {
   readonly at: number
   readonly holders: readonly Holder[]
   readonly buildFolders: number
-  readonly trimmed: readonly Trimmed[]
 }
 
-/** What holds the disk now, biggest first; tool caches over 10 GB trimmed first. */
-export const census = async (
-  buildFolders: readonly string[],
-  simulatorsSwept: boolean,
-): Promise<Census> => {
-  const trimmed = await trimCaches(CAP, Number.POSITIVE_INFINITY)
+/** What holds the disk now, biggest first. */
+export const census = async (buildFolders: readonly string[]): Promise<Census> => {
   const caches = TOOL_CACHES.filter((c) => existsSync(path.join(home, c.path)))
   const kept = KEPT.filter(([, p]) => existsSync(path.join(home, p)))
   const measure = await sizes([
@@ -220,7 +209,7 @@ export const census = async (
       name,
       path: `~/${p}`,
       bytes: measure(path.join(home, p)),
-      clears: name === SIMULATORS && simulatorsSwept,
+      clears: false,
     })),
     {
       name: BUILD_FOLDERS,
@@ -232,7 +221,6 @@ export const census = async (
     at: Date.now(),
     holders: holders.toSorted((a, b) => b.bytes - a.bytes),
     buildFolders: buildFolders.length,
-    trimmed,
   }
 }
 
@@ -241,7 +229,7 @@ interface History {
   free: [number, number][]
   /** Each census: when, and what each holder took. */
   census: [number, Record<string, number>][]
-  /** What each sweep, trim or make_room cleared: when, and by holder. */
+  /** What each make_room cleared: when, and by holder. */
   cleared: [number, Record<string, number>][]
   warned: number | null
 }
@@ -283,12 +271,9 @@ const recently = (warned: number | null, now: number) =>
 const soonOf = (t: Trend | null) =>
   t !== null && t.inDays !== null && t.inDays <= WARN_DAYS ? t : null
 
-/** What a warning opens with: the rate it's falling at, or a sweep that couldn't keep room. */
-const headline = (machine: string, bytes: number, soon: Trend | null) => {
+/** What a warning opens with: the rate it's falling at. */
+const headline = (machine: string, bytes: number, soon: Trend) => {
   const freeSaid = bytes < 10 * GB ? (bytes / GB).toFixed(1) : (bytes / GB).toFixed(0)
-  if (soon === null) {
-    return `${machine}'s disk has only ${freeSaid} GB free, and a low disk's sweep cleared all it may (tool caches, idle build folders, simulators).`
-  }
   const days = soon.inDays ?? 0
   const when = days < 1 ? "less than a day" : `about ${days.toFixed(0)} days`
   return `${machine}'s disk is falling about ${(soon.falling / GB).toFixed(0)} GB a day: ${freeSaid} GB free, so under ${(soon.under / GB).toFixed(0)} GB in ${when}.`
@@ -364,7 +349,6 @@ export const outlook = (file: string) => {
   const counted = (c: Census) => {
     h.census.push([c.at, Object.fromEntries(c.holders.map((x) => [x.name, x.bytes]))])
     h.census = h.census.filter(([at]) => c.at - at <= KEEP)
-    cleared(c.at, Object.fromEntries(c.trimmed.map((t) => [t.name, t.freed])))
     save()
   }
 
@@ -446,39 +430,37 @@ export const outlook = (file: string) => {
             ...(grown && grown.cleared > 0 && { clearedGb: gb(grown.cleared) }),
           }
         }),
-      trimmed: c.trimmed.map((x) => ({ name: x.name, freedGb: gb(x.freed), how: x.how })),
     }
   }
 
   /**
-   * When the disk needs someone: under the floor within two days at the rate it's falling, or a
-   * low disk's sweep left it under 10 GB (`stuck`). At most once a day.
+   * When the disk needs someone: under the floor within two days at the rate it's falling. At most
+   * once a day.
    */
-  const warning = (machine: string, now: number, bytes: number, stuck: boolean) => {
+  const warning = (machine: string, now: number, bytes: number) => {
     if (recently(h.warned, now)) {
       return null
     }
     const soon = soonOf(trend(now, bytes))
-    const low = stuck && bytes < CRITICAL
-    if (soon === null && !low) {
+    if (soon === null) {
       return null
     }
     const g = grew()
     const parts = [
-      headline(machine, bytes, low ? null : soon),
+      headline(machine, bytes, soon),
       ...grewLines(g),
       ...biggestLine(h.census.at(-1)?.[1] ?? {}),
-      "What no sweep may clear needs archiving or clearing by hand.",
     ]
     h.warned = now
     save()
-    const urgent = soon !== null && (soon.under === CRITICAL || (soon.inDays ?? 0) < 1)
+    const urgent = soon.under === CRITICAL || (soon.inDays ?? 0) < 1
     return {
       machine,
-      severity: low || urgent ? "high" : "medium",
+      severity: urgent ? "high" : "medium",
       text: parts.join(" "),
       freeGb: gb(bytes),
-      ...(soon && { fallingGbADay: gb(soon.falling), inDays: r1(soon.inDays ?? 0) }),
+      fallingGbADay: gb(soon.falling),
+      inDays: r1(soon.inDays ?? 0),
       grew: (g?.grew ?? [])
         .slice(0, 6)
         .map((x) => ({ name: x.name, gb: gb(x.bytes), clearedGb: gb(x.cleared) })),

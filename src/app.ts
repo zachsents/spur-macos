@@ -17,7 +17,7 @@ import { load, noteDisk } from "./load.ts"
 import { askedField, guard, guardExec, marked } from "./personal.ts"
 import { check, grants } from "./protected.ts"
 import * as strays from "./strays.ts"
-import { Device, moreTools, watchDevice, watchServices } from "./more.ts"
+import { Device, moreTools, watchDevice } from "./more.ts"
 import * as procs from "./procs.ts"
 import { diskEvents, diskTool, makeRoomTool, watchDisk } from "./upkeep.ts"
 import { alerts, notable, read, reading } from "./vitals.ts"
@@ -267,15 +267,7 @@ const watchStrays = Effect.gen(function* watching() {
 
 /** What this spur does on its own while it runs. */
 export const watch = Effect.all(
-  [
-    watchAttention,
-    watchVitals,
-    watchPermissions,
-    watchStrays,
-    watchDisk,
-    watchDevice,
-    watchServices,
-  ],
+  [watchAttention, watchVitals, watchPermissions, watchStrays, watchDisk, watchDevice],
   {
     concurrency: "unbounded",
     discard: true,
@@ -295,7 +287,7 @@ const exec = tool(
   "exec",
   {
     description: marked(
-      "Run a shell command on this Mac (zsh, login environment), in its own process group: a timeout stops everything it started, and so does cancel. A long-running process (a dev server) is a service: start. Output is its head and tail when long. Files move between machines with rsync or scp over ssh, from whichever machine reaches the other.",
+      "Run a shell command on this Mac (zsh, login environment), in its own process group: a timeout stops everything it started, and so does cancel. Output is its head and tail when long. Files move between machines with rsync or scp over ssh, from whichever machine reaches the other.",
       "heavy commands (builds, tests, Blender, ffmpeg, simulators) are",
     ),
     input: Schema.Struct({
@@ -596,27 +588,6 @@ const screenshot = tool(
     }),
 )
 
-const onScreen = tool(
-  "on_screen",
-  {
-    description: "A glance at this Mac's screen: the app and window in front, and a small picture.",
-    readOnly: true,
-  },
-  () =>
-    task(async () => {
-      const { seen, locked } = await glance()
-      const picture = locked
-        ? ""
-        : `data:image/jpeg;base64,${await capture({ display: 1 }, 640).catch(() => "")}`
-      return {
-        machine,
-        label: locked ? "Locked" : (seen.window ?? seen.app),
-        value: locked || (seen.window ?? seen.app) === seen.app ? machine : seen.app,
-        picture: picture.endsWith(",") ? "" : picture,
-      }
-    }),
-)
-
 const ui = tool(
   "ui",
   {
@@ -762,7 +733,6 @@ export const macosApp = defineApp({
     attention,
     moment,
     screenshot,
-    onScreen,
     ui,
     open,
     checkPaths,
@@ -804,33 +774,6 @@ export const macosApp = defineApp({
                 value: { "@path": "/value" },
                 alert: { "@path": "/alert" },
               },
-            ],
-          },
-        },
-      ],
-    },
-    {
-      name: "screen",
-      title: "On screen",
-      surfaces: ["space", "chat"],
-      resource: "ui://macos/screen",
-      tool: "on_screen",
-      refresh: [Attention.type],
-      a2ui: () => [
-        { version: "1.0", createSurface: { surfaceId: "screen", catalogId: SWITCH_CATALOG } },
-        {
-          version: "1.0",
-          updateComponents: {
-            surfaceId: "screen",
-            components: [
-              { id: "root", component: "Lines", children: ["now", "picture"] },
-              {
-                id: "now",
-                component: "Field",
-                label: { "@path": "/label" },
-                value: { "@path": "/value" },
-              },
-              { id: "picture", component: "Picture", src: { "@path": "/picture" } },
             ],
           },
         },

@@ -1,31 +1,25 @@
 // What clears the disk, ported from Switchboard's sb-macos (caches.rs). A build folder is only a
 // cache: the next build there makes it again. Build folders are found by what's in them (Cargo's
 // record of rustc, Xcode's info.plist) or, in a git worktree, by being a build output git ignores
-// (target, build, dist…); a piece of work is a linked worktree. Every ten minutes the build folders
-// of work nothing runs in go, whatever the free space (on 17 November finished tasks' held 30 to
-// 39 GB on the Mac mini), and what each work holds is counted against its 8 GB budget. When free
-// space falls under 20 GB, tool caches then build folders nothing built in for two hours (half an
-// hour under 10 GB) go, oldest first, until 40 GB are free. Off the user's laptop, simulators shut
-// down for an hour go too. `make_room` does the same at once, toward the room asked for.
+// (target, build, dist…); a piece of work is a linked worktree, and what each holds is counted
+// against its 8 GB budget. Nothing is deleted on its own: `make_room` clears tool caches, then
+// build folders nothing built in for half an hour and nothing works in, oldest first, toward the
+// room asked for.
 import { existsSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs"
 import type { Dirent } from "node:fs"
 import { homedir, tmpdir } from "node:os"
 import path from "node:path"
 
-import { CRITICAL, free, GB, inTurn, LOW, run, size, sizes, trimCaches } from "./disk.ts"
+import { free, GB, inTurn, run, sizes, trimCaches } from "./disk.ts"
 import type { Trimmed } from "./disk.ts"
 
 const MINUTE = 60_000
-const HOUR = 60 * MINUTE
-/** Free space a sweep stops at. */
+/** Free space make_room stops at by default. */
 const ENOUGH = 40 * GB
-/** A tool cache under this isn't worth a sweep's trim. */
+/** A tool cache under this isn't worth make_room's trim. */
 const FLOOR = GB
-const IDLE = 2 * HOUR
-const IDLE_CRITICAL = 30 * MINUTE
-/** Nothing built in a work's build folder for this long before it goes. */
-const IDLE_LAST = 5 * MINUTE
-const SIMULATOR_IDLE = HOUR
+/** Nothing built in a build folder for this long before make_room takes it. */
+const IDLE = 30 * MINUTE
 /** What one piece of work's build folders may hold before its turns should clear them. */
 export const BUDGET = 8 * GB
 const DEPTH = 6
@@ -43,24 +37,14 @@ const GUARDED = new Set([
   ".Trash",
 ])
 const SKIP = new Set([".git", "node_modules"])
-/** A file in a build folder that keeps it from every sweep. */
+/** A file in a build folder that keeps it from make_room. */
 const KEEPS = [".keep", ".switchboard-keep"]
-/** A file at a worktree's root that makes it an agent's piece of work. */
-const WORK = ".switch-work"
-/** Where agents make their worktrees (Claude Code's, T3 Code's). */
-const AGENT_TREES = ["/.claude/worktrees/", "/.t3/worktrees/"]
-/** Switch's own state: never swept. */
+/** Switch's own state: never cleared. */
 const STATE = process.env.SWITCH_DIR ?? path.resolve(process.cwd(), "../..")
 
 const kept = (folder: string) =>
   folder.startsWith(`${STATE}/`) || KEEPS.some((k) => existsSync(path.join(folder, k)))
 
-/**
- * Whether a worktree is an agent's: made where agents make them, or marked. Its build folders go
- * once nothing runs in it; anyone else's only on a low disk.
- */
-const agents = (worktree: string) =>
-  AGENT_TREES.some((t) => worktree.includes(t)) || existsSync(path.join(worktree, WORK))
 /** Build outputs by name, counted only where git ignores them. */
 const OUTPUTS = new Set([
   "target",
@@ -249,24 +233,6 @@ const remove = async (folder: string) => {
   return Math.max(0, before - after)
 }
 
-/** The build folders of work nothing runs in, nothing built in for five minutes. */
-export const sweepEnded = async (s: Scan) => {
-  const using = await inUse()
-  const out: Swept[] = []
-  const due = s.works
-    .filter((w) => agents(w.worktree) && !using(w.worktree))
-    .flatMap((w) =>
-      w.folders.filter((f) => !kept(f)).map((folder) => ({ folder, worktree: w.worktree })),
-    )
-  await inTurn(due, async ({ folder, worktree }) => {
-    if (existsSync(folder) && !(await changedWithin(folder, IDLE_LAST))) {
-      out.push({ folder, freed: await remove(folder), worktree })
-    }
-    return true
-  })
-  return out
-}
-
 export interface ByWork {
   readonly worktree: string
   readonly gb: number
@@ -322,105 +288,9 @@ const sweepIdle = async (s: Scan, idle: number, enough: number) => {
   return out
 }
 
-interface Device {
-  readonly udid?: string
-  readonly name?: string
-  readonly state?: string
-  readonly dataPath?: string
-}
-
-const isDevices = (v: unknown): v is { devices: Record<string, Device[]> } =>
-  typeof v === "object" && v !== null && "devices" in v
-
-const parse: (text: string) => unknown = JSON.parse
-
-/** Simulators shut down for an hour, and those whose iOS is gone: each one's name and size. */
-export const sweepSimulators = async () => {
-  if (Bun.which("xcrun") === null) {
-    return []
-  }
-  const listed = await run(["xcrun", "simctl", "list", "-j", "devices"], 60_000)
-  if (listed.code !== 0) {
-    return []
-  }
-  const data = parse(listed.out)
-  const devices = isDevices(data) ? Object.values(data.devices).flat() : []
-  const out: { readonly name: string; readonly freed: number }[] = []
-  const idle = devices.filter((d) => {
-    if (d.state !== "Shutdown" || d.udid === undefined || d.dataPath === undefined) {
-      return false
-    }
-    const used = lastChange(path.join(path.dirname(d.dataPath), "device.plist"))
-    return used !== 0 && Date.now() - used >= SIMULATOR_IDLE
-  })
-  await inTurn(idle, async (d) => {
-    const folder = path.dirname(d.dataPath ?? "")
-    const bytes = await size(folder)
-    const done = await run(["xcrun", "simctl", "delete", d.udid ?? ""], 60_000)
-    if (done.code === 0) {
-      out.push({ name: d.name ?? d.udid ?? "", freed: bytes })
-    }
-    return true
-  })
-  await run(["xcrun", "simctl", "delete", "unavailable"], 60_000)
-  return out
-}
-
-/** Where macOS copies an app to check its signature each time it launches: `…/X`. */
-const cloneRoot = () => {
-  const temp = Bun.spawnSync(["getconf", "DARWIN_USER_TEMP_DIR"]).stdout.toString().trim()
-  return temp === "" ? null : path.resolve(temp, "..", "X")
-}
-
-/** Every path some process has open, as lsof lists them. */
-const openPaths = async () => {
-  const { out } = await run(["lsof", "-Fn"], 60_000)
-  return out
-    .split("\n")
-    .filter((l) => l.startsWith("n/"))
-    .map((l) => l.slice(1))
-}
-
-/**
- * Code-sign clones: macOS copies an app (`<bundle>.code_sign_clone/code_sign_clone.*`) each time it
- * launches and never deletes the old copies; a headless browser started again and again left 81 of
- * Chrome's, 116 GB. All but each app's newest go, and any a process has open stays.
- */
-export const sweepClones = async (): Promise<Trimmed | null> => {
-  const root = cloneRoot()
-  if (root === null || !existsSync(root)) {
-    return null
-  }
-  const apps = entries(root).filter((e) => isDir(e) && e.name.endsWith(".code_sign_clone"))
-  const stale = apps.flatMap((app) => {
-    const dir = path.join(root, app.name)
-    return entries(dir)
-      .filter((e) => isDir(e) && e.name.startsWith("code_sign_clone."))
-      .map((e) => path.join(dir, e.name))
-      .toSorted((a, b) => lastChange(b) - lastChange(a))
-      .slice(1)
-  })
-  if (stale.length === 0) {
-    return null
-  }
-  const open = await openPaths()
-  const measure = await sizes(stale)
-  let freed = 0
-  let gone = 0
-  for (const clone of stale) {
-    if (!open.some((p) => p.startsWith(`${clone}/`))) {
-      rmSync(clone, { recursive: true, force: true })
-      freed += measure(clone)
-      gone += 1
-    }
-  }
-  return gone === 0 ? null : { name: "code-sign clones", freed, how: `${gone} deleted` }
-}
-
 export interface Cleared {
   readonly trimmed: readonly Trimmed[]
   readonly swept: readonly Swept[]
-  readonly simulators: readonly { readonly name: string; readonly freed: number }[]
 }
 
 /** What a clearing freed, by holder, for the outlook. */
@@ -430,46 +300,23 @@ export const byHolder = (c: Cleared): Record<string, number> => {
     out[t.name] = (out[t.name] ?? 0) + t.freed
   }
   out["build folders"] = c.swept.reduce((s, x) => s + x.freed, 0)
-  out["iOS simulators"] = c.simulators.reduce((s, x) => s + x.freed, 0)
   return out
 }
 
 export const freedOf = (c: Cleared) =>
-  c.trimmed.reduce((s, x) => s + x.freed, 0) +
-  c.swept.reduce((s, x) => s + x.freed, 0) +
-  c.simulators.reduce((s, x) => s + x.freed, 0)
+  c.trimmed.reduce((s, x) => s + x.freed, 0) + c.swept.reduce((s, x) => s + x.freed, 0)
 
 /**
- * Clears toward `enough` free: tool caches first (a download takes seconds where a build takes
- * minutes), then build folders idle for `idle`, then simulators when `simulators`.
+ * `make_room`: tool caches first (a download takes seconds where a build takes minutes), then
+ * build folders idle for half an hour, toward `want` free; then the biggest build folders left.
  */
-export const clear = async (
-  s: Scan,
-  idle: number,
-  enough: number,
-  simulators: boolean,
-): Promise<Cleared> => {
-  const clones = await sweepClones()
-  // Under 10 GB every tool cache goes, however small.
-  const floor = free() < CRITICAL ? 0 : FLOOR
-  const caches = free() < enough ? await trimCaches(floor, enough) : []
-  const trimmed = clones === null ? caches : [clones, ...caches]
-  const swept = free() < enough ? await sweepIdle(s, idle, enough) : []
-  const sims = simulators && free() < enough ? await sweepSimulators() : []
-  return { trimmed, swept, simulators: sims }
-}
-
-/** A low disk's sweep, when it's under 20 GB: how long idle a build folder must be. */
-export const lowIdle = (bytes: number) => (bytes < CRITICAL ? IDLE_CRITICAL : IDLE)
-
-export const isLow = (bytes: number) => bytes < LOW
-
-/** `make_room`: clears at once as if the disk were critical, toward `want` free. */
-export const makeRoom = async (want: number | undefined, simulators: boolean) => {
+export const makeRoom = async (want: number | undefined) => {
   const target = want ?? ENOUGH
   const before = free()
   const s = await scan()
-  const cleared = await clear(s, IDLE_CRITICAL, target, simulators)
+  const trimmed = free() < target ? await trimCaches(FLOOR, target) : []
+  const swept = free() < target ? await sweepIdle(s, IDLE, target) : []
+  const cleared: Cleared = { trimmed, swept }
   const after = free()
   const measure = await sizes(s.folders.filter((f) => existsSync(f)))
   const held = s.folders

@@ -1,30 +1,17 @@
-// The disk's upkeep as this spur runs it: the census every six hours, sweeps of ended work's build
-// folders every ten minutes, of simulators every half hour off the user's laptop, a low disk's sweep
-// when it's under 20 GB, and a forecast that says, a day or two ahead, when it'll be low and what
-// grew. Each is an event, so triage can wake a turn on a disk about to fill.
+// The disk as this spur watches it: the census every six hours, what each piece of work's build
+// folders hold every ten minutes, and a forecast that says, a day or two ahead, when it'll be low
+// and what grew. Each is an event, so triage can wake a turn on a disk about to fill. Nothing is
+// deleted unless `make_room` is called.
 import path from "node:path"
 import { Effect, Schema } from "effect"
 
-import { AppEvents, Asks, defineEvent, personal, tool } from "spur-kit"
+import { AppEvents, defineEvent, tool } from "spur-kit"
 import { census, free, GB, outlook } from "./disk.ts"
-import {
-  byHolder,
-  byWork,
-  clear,
-  freedOf,
-  isLow,
-  lowIdle,
-  makeRoom,
-  scan,
-  sweepEnded,
-  sweepClones,
-  sweepSimulators,
-} from "./sweeps.ts"
+import { byHolder, byWork, freedOf, makeRoom, scan } from "./sweeps.ts"
 import type { ByWork, Cleared, Swept } from "./sweeps.ts"
 
 const MINUTE = 60_000
 const machine = process.env.SWITCH_MACHINE ?? "mac"
-const laptop = personal()
 const look = outlook(path.join(process.cwd(), "disk.json"))
 
 const gb = (bytes: number) => Math.round((bytes / GB) * 10) / 10
@@ -53,35 +40,10 @@ export const DiskUse = defineEvent(
     inDays: Schema.optionalKey(Schema.Finite),
     grewOverDays: Schema.optionalKey(Schema.Finite),
     holders: Schema.Array(holder),
-    trimmed: Schema.Array(
-      Schema.Struct({ name: Schema.String, freedGb: Schema.Finite, how: Schema.String }),
-    ),
   }),
 )
 
-/** What a sweep cleared: build folders, tool caches, simulators. */
-export const DiskSwept = defineEvent(
-  "macos.disk_swept",
-  1,
-  Schema.Struct({
-    machine: Schema.String,
-    /** ended: work nothing runs in; low: a low disk; make_room; simulators. */
-    why: Schema.Literals(["ended", "low", "make_room", "simulators", "clones"]),
-    freedGb: Schema.Finite,
-    freeGb: Schema.Finite,
-    folders: Schema.Array(
-      Schema.Struct({
-        folder: Schema.String,
-        gb: Schema.Finite,
-        worktree: Schema.optionalKey(Schema.String),
-      }),
-    ),
-    trimmed: Schema.Array(Schema.Struct({ name: Schema.String, freedGb: Schema.Finite })),
-    simulators: Schema.Array(Schema.Struct({ name: Schema.String, gb: Schema.Finite })),
-  }),
-)
-
-/** The disk will be low within two days, or a low disk's sweep couldn't keep 10 GB free. */
+/** The disk will be low within two days. */
 export const DiskLow = defineEvent(
   "macos.disk_low",
   1,
@@ -110,7 +72,7 @@ export const DiskByWork = defineEvent(
   }),
 )
 
-// One clearing at a time: a sweep and make_room would delete the same folders and miscount.
+// One at a time: a census and make_room would count and delete the same folders and miscount.
 let queue: Promise<unknown> = Promise.resolve()
 const exclusive = async <A>(f: () => Promise<A>): Promise<A> => {
   const next = queue.catch(() => null).then(f)
@@ -121,9 +83,8 @@ const exclusive = async <A>(f: () => Promise<A>): Promise<A> => {
 const task = <A>(f: () => Promise<A>) =>
   Effect.tryPromise({ try: f, catch: (e) => (e instanceof Error ? e : new Error(String(e))) })
 
-const sweptOf = (why: "ended" | "low" | "make_room" | "simulators" | "clones", c: Cleared) => ({
+const sweptOf = (c: Cleared) => ({
   machine,
-  why,
   freedGb: gb(freedOf(c)),
   freeGb: gb(free()),
   folders: c.swept.map((s: Swept) => ({
@@ -132,7 +93,6 @@ const sweptOf = (why: "ended" | "low" | "make_room" | "simulators" | "clones", c
     ...(s.worktree !== undefined && { worktree: s.worktree }),
   })),
   trimmed: c.trimmed.map((t) => ({ name: t.name, freedGb: gb(t.freed) })),
-  simulators: c.simulators.map((s) => ({ name: s.name, gb: gb(s.freed) })),
 })
 
 let latest: ReturnType<typeof look.facts> | null = null
@@ -140,83 +100,18 @@ let works: readonly ByWork[] = []
 
 const takeCensus = async () => {
   const s = await scan()
-  const c = await census(s.folders, !laptop)
+  const c = await census(s.folders)
   look.counted(c)
   latest = look.facts(c, free())
   return latest
 }
 
-const NOTHING: Cleared = { trimmed: [], swept: [], simulators: [] }
-
-/** Free space under which the user is told, well before it's too little to work: 2 GB stops deploys. */
-const ALERT = 5 * GB
-/** Back over this, the alert closes. */
-const CLEAR = 8 * GB
-
-interface Alerted {
-  readonly id: string
-  readonly gb: number
-}
-
-/** What holds the most, from the last census. */
-const biggest = () =>
-  (latest?.holders ?? [])
-    .slice(0, 4)
-    .map((h) => `${h.name} ${h.gb} GB`)
-    .join(", ")
-
-/**
- * An action item while the disk is under 5 GB, revised as it falls by a gigabyte, closed once it's
- * back over 8. Sweeps run first; this is for what only the user can clear.
- */
-const alert = (was: Alerted | null) =>
-  Effect.gen(function* alerting() {
-    const asks = yield* Asks
-    const gbNow = gb(free())
-    if (was !== null && gbNow >= CLEAR / GB) {
-      yield* asks.close(was.id, "done").pipe(Effect.ignore)
-      return null
-    }
-    if (gbNow >= ALERT / GB || (was !== null && was.gb - gbNow < 1)) {
-      return was
-    }
-    const held = biggest()
-    const opened = yield* asks
-      .open(
-        {
-          title: `${machine}: ${gbNow} GB free`,
-          body: `${machine}'s disk is nearly full (${gbNow} GB free); sweeps have cleared what they may.${held === "" ? "" : ` Biggest: ${held}.`} Under 2 GB deploys and builds fail.`,
-          kind: "task",
-          notify: true,
-        },
-        ...(was === null ? [] : [was.id]),
-      )
-      .pipe(Effect.option)
-    return opened._tag === "Some" ? { id: opened.value.id, gb: gbNow } : was
-  })
-
-/** Code-sign clones past each app's newest, whatever the free space. */
-const cloneSweep = (now: number) =>
-  Effect.gen(function* sweeping() {
-    const events = yield* AppEvents
-    const gone = yield* Effect.option(task(async () => await exclusive(sweepClones)))
-    if (gone._tag === "Some" && gone.value !== null) {
-      const c: Cleared = { ...NOTHING, trimmed: [gone.value] }
-      look.cleared(now, byHolder(c))
-      yield* events.emit(DiskSwept.make(sweptOf("clones", c))).pipe(Effect.ignore)
-    }
-  })
-
-/** The disk's upkeep, while the spur runs. */
-export const watchDisk = Effect.gen(function* upkeep() {
+/** The disk's watch, while the spur runs. */
+export const watchDisk = Effect.gen(function* watching() {
   const events = yield* AppEvents
   const emit = (e: Parameters<typeof events.emit>[0]) => events.emit(e).pipe(Effect.ignore)
-  let ended = 0
-  let sims = 0
-  let pauseUntil = 0
+  let counted = 0
   let over = ""
-  let clones = 0
-  let alerted: Alerted | null = null
   for (;;) {
     const now = Date.now()
     look.sample(now, free())
@@ -224,32 +119,19 @@ export const watchDisk = Effect.gen(function* upkeep() {
       const facts = yield* Effect.option(task(async () => await exclusive(takeCensus)))
       if (facts._tag === "Some") {
         yield* emit(DiskUse.make({ machine, ...facts.value }))
-        const w = look.warning(machine, now, free(), false)
+        const w = look.warning(machine, now, free())
         if (w !== null) {
           yield* emit(DiskLow.make(w))
         }
       }
     }
-    if (now - ended >= 10 * MINUTE) {
-      ended = now
+    if (now - counted >= 10 * MINUTE) {
+      counted = now
       const done = yield* Effect.option(
-        task(
-          async () =>
-            await exclusive(async () => {
-              const s = await scan()
-              const swept = await sweepEnded(s)
-              return { swept, works: await byWork(s) }
-            }),
-        ),
+        task(async () => await exclusive(async () => await byWork(await scan()))),
       )
       if (done._tag === "Some") {
-        const { works: counted } = done.value
-        works = counted
-        const c: Cleared = { ...NOTHING, swept: done.value.swept }
-        if (c.swept.length > 0) {
-          look.cleared(now, byHolder(c))
-          yield* emit(DiskSwept.make(sweptOf("ended", c)))
-        }
+        works = done.value
         const overBudget = works
           .filter((w) => w.overBudget)
           .map((w) => ({ worktree: w.worktree, gb: w.gb, running: w.running }))
@@ -260,38 +142,6 @@ export const watchDisk = Effect.gen(function* upkeep() {
         }
       }
     }
-    if (now - clones >= 30 * MINUTE) {
-      clones = now
-      yield* cloneSweep(now)
-    }
-    alerted = yield* alert(alerted)
-    if (!laptop && now - sims >= 30 * MINUTE) {
-      sims = now
-      const gone = yield* Effect.option(task(async () => await exclusive(sweepSimulators)))
-      if (gone._tag === "Some" && gone.value.length > 0) {
-        const c: Cleared = { ...NOTHING, simulators: gone.value }
-        look.cleared(now, byHolder(c))
-        yield* emit(DiskSwept.make(sweptOf("simulators", c)))
-      }
-    }
-    const left = free()
-    if (isLow(left) && now >= pauseUntil) {
-      pauseUntil = now + (left < 10 * GB ? 5 : 15) * MINUTE
-      const c = yield* Effect.option(
-        task(
-          async () =>
-            await exclusive(async () => await clear(await scan(), lowIdle(left), 40 * GB, !laptop)),
-        ),
-      )
-      if (c._tag === "Some" && freedOf(c.value) > 0) {
-        look.cleared(now, byHolder(c.value))
-        yield* emit(DiskSwept.make(sweptOf("low", c.value)))
-      }
-      const w = look.warning(machine, now, free(), true)
-      if (w !== null) {
-        yield* emit(DiskLow.make(w))
-      }
-    }
     yield* Effect.sleep("1 minute")
   }
 })
@@ -300,7 +150,7 @@ export const diskTool = tool(
   "disk",
   {
     description:
-      "What holds this Mac's disk: each tool cache, the build folders, simulators, toolchains and models, with what each grew by over three days (counting what sweeps cleared), how fast free space is falling and in how many days it'll be low; and each piece of work's (git worktree's) build folders against its 8 GB budget. From the census every six hours; `fresh` takes one now. Sweeps clear build folders of work nothing runs in, and on a low disk tool caches, idle build folders and simulators.",
+      "What holds this Mac's disk: each tool cache, the build folders, simulators, toolchains and models, with what each grew by over three days (counting what make_room cleared), how fast free space is falling and in how many days it'll be low; and each piece of work's (git worktree's) build folders against its 8 GB budget. From the census every six hours; `fresh` takes one now.",
     readOnly: true,
     input: Schema.Struct({ fresh: Schema.optionalKey(Schema.Boolean) }),
   },
@@ -315,17 +165,17 @@ export const makeRoomTool = tool(
   "make_room",
   {
     description:
-      "Free disk space on this Mac now, before a build or a download: tool caches, then build folders nothing has built in for half an hour and nothing works in, oldest first, then (off the user's laptop) simulators shut down for an hour, until `gb` are free (40 by default). Says what it freed and the biggest build folders left.",
+      "Free disk space on this Mac now, before a build or a download: tool caches, then build folders nothing has built in for half an hour and nothing works in, oldest first, until `gb` are free (40 by default). Says what it freed and the biggest build folders left.",
     input: Schema.Struct({ gb: Schema.optionalKey(Schema.Finite) }),
   },
   (input) =>
     task(async () => {
       const done = await exclusive(
-        async () => await makeRoom(input.gb === undefined ? undefined : input.gb * GB, !laptop),
+        async () => await makeRoom(input.gb === undefined ? undefined : input.gb * GB),
       )
       look.cleared(Date.now(), byHolder(done.cleared))
       return {
-        ...sweptOf("make_room", done.cleared),
+        ...sweptOf(done.cleared),
         beforeGb: gb(done.before),
         wantedGb: gb(done.target),
         left: done.held,
@@ -333,4 +183,4 @@ export const makeRoomTool = tool(
     }),
 )
 
-export const diskEvents = [DiskUse, DiskSwept, DiskLow, DiskByWork]
+export const diskEvents = [DiskUse, DiskLow, DiskByWork]
