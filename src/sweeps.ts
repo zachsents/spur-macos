@@ -366,6 +366,57 @@ export const sweepSimulators = async () => {
   return out
 }
 
+/** Where macOS copies an app to check its signature each time it launches: `…/X`. */
+const cloneRoot = () => {
+  const temp = Bun.spawnSync(["getconf", "DARWIN_USER_TEMP_DIR"]).stdout.toString().trim()
+  return temp === "" ? null : path.resolve(temp, "..", "X")
+}
+
+/** Every path some process has open, as lsof lists them. */
+const openPaths = async () => {
+  const { out } = await run(["lsof", "-Fn"], 60_000)
+  return out
+    .split("\n")
+    .filter((l) => l.startsWith("n/"))
+    .map((l) => l.slice(1))
+}
+
+/**
+ * Code-sign clones: macOS copies an app (`<bundle>.code_sign_clone/code_sign_clone.*`) each time it
+ * launches and never deletes the old copies; a headless browser started again and again left 81 of
+ * Chrome's, 116 GB. All but each app's newest go, and any a process has open stays.
+ */
+export const sweepClones = async (): Promise<Trimmed | null> => {
+  const root = cloneRoot()
+  if (root === null || !existsSync(root)) {
+    return null
+  }
+  const apps = entries(root).filter((e) => isDir(e) && e.name.endsWith(".code_sign_clone"))
+  const stale = apps.flatMap((app) => {
+    const dir = path.join(root, app.name)
+    return entries(dir)
+      .filter((e) => isDir(e) && e.name.startsWith("code_sign_clone."))
+      .map((e) => path.join(dir, e.name))
+      .toSorted((a, b) => lastChange(b) - lastChange(a))
+      .slice(1)
+  })
+  if (stale.length === 0) {
+    return null
+  }
+  const open = await openPaths()
+  const measure = await sizes(stale)
+  let freed = 0
+  let gone = 0
+  for (const clone of stale) {
+    if (!open.some((p) => p.startsWith(`${clone}/`))) {
+      rmSync(clone, { recursive: true, force: true })
+      freed += measure(clone)
+      gone += 1
+    }
+  }
+  return gone === 0 ? null : { name: "code-sign clones", freed, how: `${gone} deleted` }
+}
+
 export interface Cleared {
   readonly trimmed: readonly Trimmed[]
   readonly swept: readonly Swept[]
@@ -398,7 +449,11 @@ export const clear = async (
   enough: number,
   simulators: boolean,
 ): Promise<Cleared> => {
-  const trimmed = free() < enough ? await trimCaches(FLOOR, enough) : []
+  const clones = await sweepClones()
+  // Under 10 GB every tool cache goes, however small.
+  const floor = free() < CRITICAL ? 0 : FLOOR
+  const caches = free() < enough ? await trimCaches(floor, enough) : []
+  const trimmed = clones === null ? caches : [clones, ...caches]
   const swept = free() < enough ? await sweepIdle(s, idle, enough) : []
   const sims = simulators && free() < enough ? await sweepSimulators() : []
   return { trimmed, swept, simulators: sims }

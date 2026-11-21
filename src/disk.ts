@@ -108,6 +108,12 @@ const TOOL_CACHES: readonly ToolCache[] = [
   { name: "SwiftPM's cache", path: "Library/Caches/org.swift.swiftpm", users: ["swift-build"] },
   { name: "sccache's cache", path: "Library/Caches/Mozilla.sccache", users: ["sccache"] },
   { name: "Codex's cache", path: "Library/Caches/Codex" },
+  {
+    name: "Puppeteer's browsers",
+    path: ".cache/puppeteer",
+    users: ["chrome-headless-shell", "Google Chrome for Testing"],
+  },
+  { name: "Chrome's cache", path: "Library/Caches/Google/Chrome" },
 ]
 
 /** Big things that come back only by hand: measured, never cleared (simulators aside). */
@@ -120,7 +126,6 @@ const KEPT: readonly (readonly [string, string])[] = [
   ["Hugging Face models", ".cache/huggingface"],
   ["PyTorch models", ".cache/torch"],
   ["Ollama models", ".ollama/models"],
-  ["Puppeteer's browsers", ".cache/puppeteer"],
   ["Playwright's browsers", "Library/Caches/ms-playwright"],
 ]
 

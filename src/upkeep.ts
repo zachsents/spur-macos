@@ -5,7 +5,7 @@
 import path from "node:path"
 import { Effect, Schema } from "effect"
 
-import { AppEvents, defineEvent, personal, tool } from "spur-kit"
+import { AppEvents, Asks, defineEvent, personal, tool } from "spur-kit"
 import { census, free, GB, outlook } from "./disk.ts"
 import {
   byHolder,
@@ -17,6 +17,7 @@ import {
   makeRoom,
   scan,
   sweepEnded,
+  sweepClones,
   sweepSimulators,
 } from "./sweeps.ts"
 import type { ByWork, Cleared, Swept } from "./sweeps.ts"
@@ -65,7 +66,7 @@ export const DiskSwept = defineEvent(
   Schema.Struct({
     machine: Schema.String,
     /** ended: work nothing runs in; low: a low disk; make_room; simulators. */
-    why: Schema.Literals(["ended", "low", "make_room", "simulators"]),
+    why: Schema.Literals(["ended", "low", "make_room", "simulators", "clones"]),
     freedGb: Schema.Finite,
     freeGb: Schema.Finite,
     folders: Schema.Array(
@@ -120,7 +121,7 @@ const exclusive = async <A>(f: () => Promise<A>): Promise<A> => {
 const task = <A>(f: () => Promise<A>) =>
   Effect.tryPromise({ try: f, catch: (e) => (e instanceof Error ? e : new Error(String(e))) })
 
-const sweptOf = (why: "ended" | "low" | "make_room" | "simulators", c: Cleared) => ({
+const sweptOf = (why: "ended" | "low" | "make_room" | "simulators" | "clones", c: Cleared) => ({
   machine,
   why,
   freedGb: gb(freedOf(c)),
@@ -147,6 +148,65 @@ const takeCensus = async () => {
 
 const NOTHING: Cleared = { trimmed: [], swept: [], simulators: [] }
 
+/** Free space under which the user is told, well before it's too little to work: 2 GB stops deploys. */
+const ALERT = 5 * GB
+/** Back over this, the alert closes. */
+const CLEAR = 8 * GB
+
+interface Alerted {
+  readonly id: string
+  readonly gb: number
+}
+
+/** What holds the most, from the last census. */
+const biggest = () =>
+  (latest?.holders ?? [])
+    .slice(0, 4)
+    .map((h) => `${h.name} ${h.gb} GB`)
+    .join(", ")
+
+/**
+ * An action item while the disk is under 5 GB, revised as it falls by a gigabyte, closed once it's
+ * back over 8. Sweeps run first; this is for what only the user can clear.
+ */
+const alert = (was: Alerted | null) =>
+  Effect.gen(function* alerting() {
+    const asks = yield* Asks
+    const gbNow = gb(free())
+    if (was !== null && gbNow >= CLEAR / GB) {
+      yield* asks.close(was.id, "done").pipe(Effect.ignore)
+      return null
+    }
+    if (gbNow >= ALERT / GB || (was !== null && was.gb - gbNow < 1)) {
+      return was
+    }
+    const held = biggest()
+    const opened = yield* asks
+      .open(
+        {
+          title: `${machine}: ${gbNow} GB free`,
+          body: `${machine}'s disk is nearly full (${gbNow} GB free); sweeps have cleared what they may.${held === "" ? "" : ` Biggest: ${held}.`} Under 2 GB deploys and builds fail.`,
+          kind: "task",
+          notify: true,
+        },
+        ...(was === null ? [] : [was.id]),
+      )
+      .pipe(Effect.option)
+    return opened._tag === "Some" ? { id: opened.value.id, gb: gbNow } : was
+  })
+
+/** Code-sign clones past each app's newest, whatever the free space. */
+const cloneSweep = (now: number) =>
+  Effect.gen(function* sweeping() {
+    const events = yield* AppEvents
+    const gone = yield* Effect.option(task(async () => await exclusive(sweepClones)))
+    if (gone._tag === "Some" && gone.value !== null) {
+      const c: Cleared = { ...NOTHING, trimmed: [gone.value] }
+      look.cleared(now, byHolder(c))
+      yield* events.emit(DiskSwept.make(sweptOf("clones", c))).pipe(Effect.ignore)
+    }
+  })
+
 /** The disk's upkeep, while the spur runs. */
 export const watchDisk = Effect.gen(function* upkeep() {
   const events = yield* AppEvents
@@ -155,6 +215,8 @@ export const watchDisk = Effect.gen(function* upkeep() {
   let sims = 0
   let pauseUntil = 0
   let over = ""
+  let clones = 0
+  let alerted: Alerted | null = null
   for (;;) {
     const now = Date.now()
     look.sample(now, free())
@@ -198,6 +260,11 @@ export const watchDisk = Effect.gen(function* upkeep() {
         }
       }
     }
+    if (now - clones >= 30 * MINUTE) {
+      clones = now
+      yield* cloneSweep(now)
+    }
+    alerted = yield* alert(alerted)
     if (!laptop && now - sims >= 30 * MINUTE) {
       sims = now
       const gone = yield* Effect.option(task(async () => await exclusive(sweepSimulators)))

@@ -1,8 +1,8 @@
 // The macOS spur as a stdio MCP server: what a host runs, from this Mac's spur folder.
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio"
 import { BunRuntime } from "@effect/platform-bun"
-import { AppEvents, serve } from "spur-kit"
-import { Effect } from "effect"
+import { AppEvents, Models, serve } from "spur-kit"
+import { Effect, Layer } from "effect"
 
 import { macosApp, watch } from "./app.ts"
 
@@ -13,5 +13,5 @@ BunRuntime.runMain(
       yield* Effect.forkScoped(watch)
       yield* done
     }),
-  ).pipe(Effect.provide(AppEvents.layer(macosApp))),
+  ).pipe(Effect.provide(Layer.merge(AppEvents.layer(macosApp), Models.layer))),
 )
