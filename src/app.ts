@@ -10,7 +10,7 @@ import { homedir, hostname } from "node:os"
 import path from "node:path"
 import { Effect, Schema } from "effect"
 
-import { AppEvents, answer, defineApp, defineEvent, HOME, SWITCH_CATALOG, tool } from "spur-kit"
+import { AppEvents, answer, defineApp, defineEvent, SWITCH_CATALOG, tool } from "spur-kit"
 import { decode } from "./barcodes.ts"
 import { capture, hands } from "./hands.ts"
 import { load, noteDisk } from "./load.ts"
@@ -780,7 +780,6 @@ export const macosApp = defineApp({
       title: "Vitals",
       surfaces: ["space"],
       resource: "ui://macos/vitals",
-      space: HOME,
       size: {
         aspect: "auto",
         min: { cols: 2, rows: 1 },
