@@ -38,10 +38,6 @@
     "widgets": [
       "vitals",
       "screen"
-    ],
-    "space": {
-      "id": "home",
-      "name": "Home"
-    }
+    ]
   }
 }
