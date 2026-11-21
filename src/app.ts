@@ -780,11 +780,12 @@ export const macosApp = defineApp({
       title: "Vitals",
       surfaces: ["space"],
       resource: "ui://macos/vitals",
+      // One line, as tall as its figures: from wide enough that they read whole, never taller.
       size: {
         aspect: "auto",
-        min: { cols: 2, rows: 1 },
+        min: { cols: 4, rows: 1 },
         preferred: { cols: 6, rows: 1 },
-        grows: true,
+        max: { cols: 8, rows: 1 },
       },
       tool: "vitals",
       refresh: [Vitals.type],
