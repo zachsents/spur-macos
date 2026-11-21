@@ -784,7 +784,7 @@ export const macosApp = defineApp({
       size: {
         aspect: "auto",
         min: { cols: 2, rows: 1 },
-        preferred: { cols: 4, rows: 1 },
+        preferred: { cols: 6, rows: 1 },
         grows: true,
       },
       tool: "vitals",
