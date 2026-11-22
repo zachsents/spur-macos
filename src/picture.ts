@@ -332,9 +332,49 @@ const laptop = (look: Look) => {
   return drawing.svg(Math.max(w, d) * 0.05)
 }
 
-/** A port on a box's front: a slot, or a round jack. */
+/** A port on a box's front: a slot, or a round jack, a shade lighter at its lip. */
 const port = (drawing: Drawing, d: number, x: number, z: number, w: number, h: number) => {
-  drawing.face({ at: [x, d / 2 + 0.05, z], ...FRONT }, w, h, Math.min(w, h) / 2, "#141416")
+  const r = Math.min(w, h) / 2
+  drawing.face({ at: [x, d / 2 + 0.04, z], ...FRONT }, w + 0.5, h + 0.5, r + 0.25, "#3a3b3e")
+  drawing.face({ at: [x, d / 2 + 0.06, z], ...FRONT }, w, h, r, "#0e0e10")
+  if (w > h) {
+    // A USB-C port's tongue.
+    drawing.face({ at: [x, d / 2 + 0.08, z], ...FRONT }, w * 0.62, h * 0.28, h * 0.14, "#2a2b2e")
+  }
+}
+
+/** The part of a rounded rectangle's outline at height `z` that faces the viewer, projected. */
+const frontRun = (drawing: Drawing, w: number, d: number, r: number, z: number) =>
+  outline(w, d, r)
+    .filter((o) => o.na + o.nb > 0)
+    .toSorted((p, q) => p.na - p.nb - (q.na - q.nb))
+    .map((o) => drawing.project([o.a, o.b, z]))
+
+const polyline = (points: readonly (readonly [number, number])[]) =>
+  points.map(([x, y]) => `${x.toFixed(2)},${y.toFixed(2)}`).join(" ")
+
+// The Apple mark as a plain shape (not Apple's artwork): a body, a leaf and a bite, in units of its
+// height, x right and y toward the front.
+const APPLE_BODY =
+  "M0 -.2C-.1 -.3 -.42 -.32 -.42 .05C-.42 .3 -.22 .55 -.1 .52C-.04 .5 .04 .5 .1 .52C.22 .55 .42 .3 .42 .05C.42 -.32 .1 -.3 0 -.2Z"
+const APPLE_LEAF = "M.02 -.26C.02 -.4 .12 -.48 .2 -.48C.2 -.36 .12 -.27 .02 -.26Z"
+
+/** The mark moved `dy` along it, in `fill`. */
+const markCopy = (dy: number, fill: string) =>
+  `<g transform="translate(0 ${dy.toFixed(4)})"><path d="${APPLE_BODY}" fill="${fill}"/><path d="${APPLE_LEAF}" fill="${fill}"/></g>`
+
+/** The mark debossed in a box's top at height `z`, `size` mm tall: its back edge in shadow, its
+ * front edge catching the light. */
+const mark = (drawing: Drawing, z: number, size: number, top: string) => {
+  const id = `m${drawing.defs.length}`
+  drawing.defs.push(
+    `<mask id="${id}" maskUnits="userSpaceOnUse" x="-1" y="-1" width="2" height="2"><rect x="-1" y="-1" width="2" height="2" fill="#fff"/><circle cx=".49" cy="-.03" r=".15" fill="#000"/></mask>`,
+  )
+  const t = `matrix(${(C * size).toFixed(3)} ${(size / 2).toFixed(3)} ${(-C * size).toFixed(3)} ${(size / 2).toFixed(3)} 0 ${(-z).toFixed(3)})`
+  const shift = 0.45 / size
+  drawing.parts.push(
+    `<g transform="${t}"><g mask="url(#${id})">${markCopy(shift, tint(top, 0.45))}${markCopy(-shift, tint(top, -0.22))}${markCopy(0, tint(top, -0.05))}</g></g>`,
+  )
 }
 
 /** Each box's corners (of its width), the foot it stands on, how far its underside is set in, and
@@ -361,13 +401,26 @@ const box = (look: Look & { readonly form: keyof typeof BOXES }) => {
     foot + 0.5,
     UNDERSIDE,
   )
+  if (look.form === "mini") {
+    // The vent ring round its recessed foot: slots in the dark, under the shell's edge.
+    const vents = frontRun(drawing, w - 2 * inset + 0.1, d - 2 * inset + 0.1, under, foot * 0.55)
+    drawing.parts.push(
+      `<polyline points="${polyline(vents)}" fill="none" stroke="#000" stroke-width="${(foot * 0.5).toFixed(2)}" stroke-dasharray="1.6 1.1" opacity=".75"/>`,
+    )
+  }
   drawing.slab({ at: [0, 0, foot], ...FLAT }, w, d, r, h - foot, metal, round)
   if (look.form === "mini") {
-    // Two USB-C ports and the headphone jack, toward the left of its front.
-    const z = foot + (h - foot) * 0.36
-    port(drawing, d, -w * 0.26, z, 8.4, 2.7)
-    port(drawing, d, -w * 0.16, z, 8.4, 2.7)
-    port(drawing, d, -w * 0.07, z, 4.2, 4.2)
+    // The shell's lower edge in its own shadow, darker toward the foot.
+    drawing.parts.push(
+      `<polyline points="${polyline(frontRun(drawing, w, d, r, foot + 0.3))}" fill="none" stroke="#000" stroke-width=".9" opacity=".22" stroke-linecap="round"/>`,
+    )
+    mark(drawing, h, w * 0.2, shade(metal, [0, 0, 1]))
+    // Two USB-C ports and the headphone jack toward the left of its front; the status light right.
+    const z = foot + (h - foot) * 0.42
+    port(drawing, d, -w * 0.27, z, 8.4, 2.7)
+    port(drawing, d, -w * 0.18, z, 8.4, 2.7)
+    port(drawing, d, -w * 0.09, z, 3.6, 3.6)
+    drawing.face({ at: [w * 0.33, d / 2 + 0.06, z], ...FRONT }, 1.1, 1.1, 0.55, "#cfe9d6")
   } else if (look.form === "studio") {
     // Two USB-C ports, and the card slot.
     const z = foot + 18

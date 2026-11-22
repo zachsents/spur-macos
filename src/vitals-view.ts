@@ -223,6 +223,22 @@ setTheme({
   theme: window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light",
 })
 
+/** Its height, as MCP Apps' size-changed tells the host: exactly what it draws, as it changes. */
+const reportHeight = () => {
+  const main = document.querySelector<HTMLElement>(".vitals")
+  if (!main) {
+    return
+  }
+  let last = 0
+  new ResizeObserver(() => {
+    const height = Math.ceil(main.getBoundingClientRect().height)
+    if (height > 0 && height !== last) {
+      last = height
+      post({ method: "ui/notifications/size-changed", params: { height } })
+    }
+  }).observe(main)
+}
+
 window.addEventListener("message", (e: MessageEvent<unknown>) => {
   const m = e.data
   if (e.source !== window.parent || typeof m !== "object" || m === null) {
@@ -235,6 +251,7 @@ window.addEventListener("message", (e: MessageEvent<unknown>) => {
       setTheme(m.result.hostContext)
     }
     post({ method: "ui/notifications/initialized" })
+    reportHeight()
   } else if (method === "ui/notifications/tool-result") {
     const v = resultOf("params" in m ? m.params : null)
     if (isVitals(v)) {
