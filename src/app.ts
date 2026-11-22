@@ -13,22 +13,24 @@ import { Effect, Schema } from "effect"
 import {
   AppEvents,
   answer,
-  BASIC_CATALOG,
   defineApp,
   defineEvent,
-  SWITCH_CATALOG,
+  MCP_CATALOG,
+  surface,
   tool,
 } from "switch-ext-kit"
 import { decode } from "./barcodes.ts"
 import { capture, hands } from "./hands.ts"
 import { load, noteDisk } from "./load.ts"
+import { look } from "./look.ts"
 import { askedField, guard, guardExec, marked } from "./personal.ts"
 import { check, grants } from "./protected.ts"
 import * as strays from "./strays.ts"
 import { Device, moreTools, watchDevice } from "./more.ts"
 import * as procs from "./procs.ts"
 import { diskEvents, diskTool, makeRoomTool, watchDisk } from "./upkeep.ts"
-import { alerts, notable, read, reading } from "./vitals.ts"
+import { RATIO, vitalsPage } from "./vitals-page.ts"
+import { alerting, alerts, notable, read, reading } from "./vitals.ts"
 import type { Reading } from "./vitals.ts"
 
 export const machine = process.env.SWITCH_MACHINE ?? hostname().split(".")[0] ?? "mac"
@@ -206,7 +208,10 @@ const stateChanged = (
   )
 }
 
-// Vitals: read every minute, an event every five or when something worth a glance changes.
+// Vitals: read every minute, an event every five or when something worth a glance changes. Its
+// widget's page is made as the extension starts: Bun runs no macros from an installed package.
+
+const page = look().then((l) => vitalsPage(machine, l))
 
 let latest: Reading | null = null
 
@@ -469,15 +474,6 @@ const statFile = tool(
     }),
 )
 
-const line = (r: Reading) => {
-  const parts = [`CPU ${Math.round(r.cpu)}%`, `Mem ${r.memoryPct}%`]
-  if (r.battery !== undefined && (r.battery.onBattery || r.battery.pct < 100)) {
-    parts.push(`Bat ${r.battery.pct}%`)
-  }
-  parts.push(`${Math.round(r.diskFreeGb)} GB`)
-  return parts.join(" · ")
-}
-
 const vitals = tool(
   "vitals",
   {
@@ -488,9 +484,8 @@ const vitals = tool(
   () =>
     task(async () => {
       const r = latest ?? (await read(machine))
-      const found = alerts(r)
-      // `label`, `value` and `alert` are the widget's line.
-      return { ...r, alerts: found, label: machine, value: line(r), alert: found.length > 0 }
+      // `alerting` is which of its widget's meters they show on.
+      return { ...r, alerts: alerts(r), alerting: alerting(r) }
     }),
 )
 
@@ -758,34 +753,27 @@ export const macosApp = defineApp({
       title: "Vitals",
       surfaces: ["space"],
       resource: "ui://macos/vitals",
-      // One line, as tall as its figures: from wide enough that they read whole, never taller.
+      // This Mac's picture between its meters, a shape that scales with its cell.
       size: {
-        aspect: "auto",
-        min: { cols: 4, rows: 1 },
-        preferred: { cols: 6, rows: 1 },
-        max: { cols: 8, rows: 1 },
+        aspect: "wide",
+        ratio: RATIO,
+        min: { cols: 4, rows: 2 },
+        preferred: { cols: 5, rows: 2 },
+        max: { cols: 8, rows: 3 },
       },
       tool: "vitals",
       refresh: [Vitals.type],
-      a2ui: () => [
-        { version: "1.0", createSurface: { surfaceId: "vitals", catalogId: SWITCH_CATALOG } },
-        {
-          version: "1.0",
-          updateComponents: {
-            surfaceId: "vitals",
-            components: [
-              { id: "root", component: "List", catalogId: BASIC_CATALOG, children: ["line"] },
-              {
-                id: "line",
-                component: "Field",
-                label: { "@path": "/label" },
-                value: { "@path": "/value" },
-                alert: { "@path": "/alert" },
-              },
-            ],
+      a2ui: async () =>
+        surface("vitals", MCP_CATALOG, [
+          {
+            id: "root",
+            component: "McpApp",
+            title: machine,
+            htmlContent: await page,
+            // The tool's whole result, as MCP Apps' tool-result.
+            data: { paths: { toolResult: "/" } },
           },
-        },
-      ],
+        ]),
     },
   ],
 })

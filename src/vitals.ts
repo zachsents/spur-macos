@@ -17,6 +17,8 @@ export const reading = Schema.Struct({
   pressure: Schema.Literals(["normal", "warn", "critical"]),
   swapGb: Schema.Finite,
   diskFreeGb: Schema.Finite,
+  /** Of the data volume, as `df` counts it. */
+  diskUsedPct: Schema.optionalKey(Schema.Finite),
   battery: Schema.optionalKey(
     Schema.Struct({ pct: Schema.Finite, charging: Schema.Boolean, onBattery: Schema.Boolean }),
   ),
@@ -91,6 +93,7 @@ export const read = async (machine: string): Promise<Reading> => {
   const freePct = Number(/(?<pct>\d+)%/u.exec(free)?.groups?.pct ?? "100")
   const used = /used = (?<mb>[\d.]+)M/u.exec(swap)?.groups?.mb ?? "0"
   const disk = statfsSync("/System/Volumes/Data")
+  const usedBlocks = disk.blocks - disk.bfree
   const b = battery(batt)
   return {
     machine,
@@ -102,20 +105,30 @@ export const read = async (machine: string): Promise<Reading> => {
     pressure: PRESSURE[level.trim()] ?? "normal",
     swapGb: round(Number(used) / 1024),
     diskFreeGb: round((disk.bavail * disk.bsize) / 1e9),
+    diskUsedPct: round((usedBlocks / (usedBlocks + disk.bavail)) * 100),
     ...(b === undefined ? {} : { battery: b }),
   }
 }
 
 const LOW_DISK_GB = 10
-/** What a glance at it should notice, worst first: critical pressure, a full disk, a flat battery, sustained CPU. */
-export const alerts = (r: Reading): readonly string[] => [
-  ...(r.pressure === "critical" ? ["Memory critical"] : []),
-  ...(r.diskFreeGb < LOW_DISK_GB ? [`${r.diskFreeGb.toFixed(0)} GB free`] : []),
-  ...(r.battery !== undefined && r.battery.onBattery && r.battery.pct <= 15
-    ? [`Battery ${r.battery.pct}%`]
+
+/** What a glance at it should notice, worst first, by the meter it shows on: critical pressure, a
+ * full disk, a flat battery, sustained CPU. */
+const warnings = (r: Reading) => [
+  ...(r.pressure === "critical" ? [{ on: "pressure", say: "Memory critical" }] : []),
+  ...(r.diskFreeGb < LOW_DISK_GB
+    ? [{ on: "disk", say: `${r.diskFreeGb.toFixed(0)} GB free` }]
     : []),
-  ...(r.cpuHot === true ? ["CPU busy"] : []),
+  ...(r.battery !== undefined && r.battery.onBattery && r.battery.pct <= 15
+    ? [{ on: "battery", say: `Battery ${r.battery.pct}%` }]
+    : []),
+  ...(r.cpuHot === true ? [{ on: "cpu", say: "CPU busy" }] : []),
 ]
+
+export const alerts = (r: Reading): readonly string[] => warnings(r).map((w) => w.say)
+
+/** The meters `alerts` show on. */
+export const alerting = (r: Reading): readonly string[] => warnings(r).map((w) => w.on)
 
 /** A change worth an event between the regular ones: a new alert, or the power plugged or pulled. */
 export const notable = (was: Reading | null, now: Reading) =>
