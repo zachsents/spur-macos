@@ -1,5 +1,5 @@
 // This Mac drawn isometric, as SVG: a MacBook open, a Mac mini or a Mac Studio, to its look's size
-// in millimetres, in aluminium lit from the front left. Each part is an extruded rounded
+// in millimetres, in its finish lit from the front left. Each part is an extruded rounded
 // rectangle; its sides and top are shaded by which way they face, its sides as one band whose
 // gradient follows them round their corners.
 import type { Look } from "./look.ts"
@@ -30,6 +30,18 @@ interface Finish {
   readonly lit: string
 }
 const ALUMINIUM: Finish = { dark: "#585b60", lit: "#eef0f2" }
+/** Apple's enclosure colours, by the names CoreTypes gives them (look.ts); any other is silver. */
+const FINISHES: Readonly<Record<string, Finish>> = {
+  silver: ALUMINIUM,
+  "space-gray": { dark: "#3c3d40", lit: "#a4a6aa" },
+  "space-black": { dark: "#1c1c1e", lit: "#5c5d61" },
+  midnight: { dark: "#14171c", lit: "#4f5866" },
+  starlight: { dark: "#6b665c", lit: "#f2ede3" },
+  gold: { dark: "#6e6352", lit: "#f4e7d2" },
+  "rose-gold": { dark: "#6f5b57", lit: "#f5ddd5" },
+  "sky-blue": { dark: "#545e69", lit: "#dce6ef" },
+}
+const finishOf = (look: Look) => FINISHES[look.finish ?? "silver"] ?? ALUMINIUM
 const UNDERSIDE: Finish = { dark: "#151516", lit: "#4a4b4e" }
 
 /** `color` moved `t` of the way toward white, or toward black when `t` is negative. */
@@ -235,6 +247,7 @@ const laptop = (look: Look) => {
   const base = h * 0.58
   const lid = h - base
   const r = w * 0.032
+  const metal = finishOf(look)
   shadow(drawing, w, d, r)
 
   // The lid first, behind: its face rises from the hinge at the back, its shell behind it.
@@ -244,7 +257,7 @@ const laptop = (look: Look) => {
   const tall = d - 1
   const hinge: V3 = [0, -d / 2 + 2, base + 0.6]
   const face: Plane = { at: add(hinge, scale(up, tall / 2)), u: [1, 0, 0], v: up, n: out }
-  drawing.slab(face, w, tall, r, -lid, ALUMINIUM)
+  drawing.slab(face, w, tall, r, -lid, metal)
   drawing.face(face, w - 1.6, tall - 1.6, r - 0.8, GLASS)
   const side = w * 0.018
   const top = d * 0.034
@@ -264,7 +277,7 @@ const laptop = (look: Look) => {
   }
 
   // The base, and on its deck the keyboard and the trackpad.
-  drawing.slab({ at: [0, 0, 0], ...FLAT }, w, d, r, base, ALUMINIUM)
+  drawing.slab({ at: [0, 0, 0], ...FLAT }, w, d, r, base, metal)
   const deck = base + 0.05
   const kbBack = -d / 2 + d * 0.05
   const kbWidth = 14.5 * PITCH
@@ -313,8 +326,8 @@ const laptop = (look: Look) => {
     w * 0.42,
     padD,
     6,
-    shade(ALUMINIUM, [0, 0.12, 1]),
-    ` stroke="${shade(ALUMINIUM, [0, 1, 0.4])}" stroke-width="1" vector-effect="non-scaling-stroke"`,
+    shade(metal, [0, 0.12, 1]),
+    ` stroke="${shade(metal, [0, 1, 0.4])}" stroke-width="1" vector-effect="non-scaling-stroke"`,
   )
   return drawing.svg(Math.max(w, d) * 0.05)
 }
@@ -337,6 +350,7 @@ const box = (look: Look & { readonly form: keyof typeof BOXES }) => {
   const drawing = new Drawing()
   const { corner, foot, inset, round } = BOXES[look.form]
   const r = w * corner
+  const metal = finishOf(look)
   shadow(drawing, w, d, r)
   const under = look.form === "mini-2010" ? (w - 2 * inset) / 2 : r - inset
   drawing.slab(
@@ -347,7 +361,7 @@ const box = (look: Look & { readonly form: keyof typeof BOXES }) => {
     foot + 0.5,
     UNDERSIDE,
   )
-  drawing.slab({ at: [0, 0, foot], ...FLAT }, w, d, r, h - foot, ALUMINIUM, round)
+  drawing.slab({ at: [0, 0, foot], ...FLAT }, w, d, r, h - foot, metal, round)
   if (look.form === "mini") {
     // Two USB-C ports and the headphone jack, toward the left of its front.
     const z = foot + (h - foot) * 0.36

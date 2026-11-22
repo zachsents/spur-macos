@@ -22,14 +22,14 @@ import {
 import { decode } from "./barcodes.ts"
 import { capture, hands } from "./hands.ts"
 import { load, noteDisk } from "./load.ts"
-import { look } from "./look.ts"
+import { thisMac } from "./look.ts"
 import { askedField, guard, guardExec, marked } from "./personal.ts"
 import { check, grants } from "./protected.ts"
 import * as strays from "./strays.ts"
 import { Device, moreTools, watchDevice } from "./more.ts"
 import * as procs from "./procs.ts"
 import { diskEvents, diskTool, makeRoomTool, watchDisk } from "./upkeep.ts"
-import { RATIO, vitalsPage } from "./vitals-page.ts"
+import { ratio, vitalsPage } from "./vitals-page.ts"
 import { alerting, alerts, notable, read, reading } from "./vitals.ts"
 import type { Reading } from "./vitals.ts"
 
@@ -211,7 +211,8 @@ const stateChanged = (
 // Vitals: read every minute, an event every five or when something worth a glance changes. Its
 // widget's page is made as the extension starts: Bun runs no macros from an installed package.
 
-const page = look().then((l) => vitalsPage(machine, l))
+const mac = await thisMac()
+const page = vitalsPage(mac.name, mac.look, mac.battery)
 
 let latest: Reading | null = null
 
@@ -756,20 +757,20 @@ export const macosApp = defineApp({
       // This Mac's picture between its meters, a shape that scales with its cell.
       size: {
         aspect: "wide",
-        ratio: RATIO,
+        ratio: ratio(mac.battery),
         min: { cols: 4, rows: 2 },
         preferred: { cols: 5, rows: 2 },
         max: { cols: 8, rows: 3 },
       },
       tool: "vitals",
       refresh: [Vitals.type],
-      a2ui: async () =>
+      a2ui: () =>
         surface("vitals", MCP_CATALOG, [
           {
             id: "root",
             component: "McpApp",
-            title: machine,
-            htmlContent: await page,
+            title: mac.name,
+            htmlContent: page,
             // The tool's whole result, as MCP Apps' tool-result.
             data: { paths: { toolResult: "/" } },
           },

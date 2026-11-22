@@ -133,6 +133,24 @@ const meters = [
   ...RIGHT.map((m) => meter(m, side("right"))),
 ]
 
+/** The plate's type made smaller until the whole name fits its side. */
+const fitPlate = () => {
+  const plate = document.querySelector<HTMLElement>(".plate")
+  const name = plate?.firstElementChild
+  const room = plate?.parentElement?.clientWidth ?? 0
+  if (!plate || !name || room === 0) {
+    return
+  }
+  plate.style.fontSize = ""
+  const text = name.getBoundingClientRect().width
+  const pad = plate.getBoundingClientRect().width - text
+  if (text + pad > room && text > 0) {
+    plate.style.fontSize = `calc(${(room - pad) / text} * 2.9 * var(--u))`
+  }
+}
+window.addEventListener("resize", fitPlate)
+void document.fonts.ready.then(fitPlate)
+
 const show = (v: Vitals) => {
   for (const m of meters) {
     m(v)
