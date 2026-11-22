@@ -10,7 +10,15 @@ import { homedir, hostname } from "node:os"
 import path from "node:path"
 import { Effect, Schema } from "effect"
 
-import { AppEvents, answer, defineApp, defineEvent, SWITCH_CATALOG, tool } from "switch-ext-kit"
+import {
+  AppEvents,
+  answer,
+  BASIC_CATALOG,
+  defineApp,
+  defineEvent,
+  SWITCH_CATALOG,
+  tool,
+} from "switch-ext-kit"
 import { decode } from "./barcodes.ts"
 import { capture, hands } from "./hands.ts"
 import { load, noteDisk } from "./load.ts"
@@ -766,7 +774,7 @@ export const macosApp = defineApp({
           updateComponents: {
             surfaceId: "vitals",
             components: [
-              { id: "root", component: "Lines", children: ["line"] },
+              { id: "root", component: "List", catalogId: BASIC_CATALOG, children: ["line"] },
               {
                 id: "line",
                 component: "Field",
