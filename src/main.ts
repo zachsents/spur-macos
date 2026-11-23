@@ -4,7 +4,11 @@ import { BunRuntime } from "@effect/platform-bun"
 import { AppEvents, Models, serve } from "switch-ext-kit"
 import { Effect, Layer } from "effect"
 
-import { macosApp, watch } from "./app.ts"
+import { machine, macosApp, watch } from "./app.ts"
+import { register } from "./vault.ts"
+
+// Asks the vault to allow this Mac now, so the user's approval comes before a secret is needed.
+void register(`macos-${machine}`)
 
 BunRuntime.runMain(
   Effect.scoped(

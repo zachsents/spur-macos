@@ -21,6 +21,7 @@ import {
 } from "switch-ext-kit"
 import { decode } from "./barcodes.ts"
 import { capture, hands } from "./hands.ts"
+import * as vault from "./vault.ts"
 import { load, noteDisk } from "./load.ts"
 import { thisMac } from "./look.ts"
 import { askedField, guard, guardExec, marked } from "./personal.ts"
@@ -596,7 +597,7 @@ const ui = tool(
   "ui",
   {
     description: marked(
-      'Drive any app on this Mac through Accessibility: one step {op, app?, match?: {role?, text?}, index?, …} or {app?, steps: [step, …]}, stopping at the first that fails. Ops: tree {depth?}, find, press, set {attribute? (AXValue), value}, focus, keys {keys: "cmd+shift+g"}, type {text}, wait {timeout_ms?, gone?}. `app` is a name or bundle id, the front one if left out.',
+      "Drive any app on this Mac through Accessibility: one step {op, app?, match?: {role?, text?}, index?, …} or {app?, steps: [step, …]}, stopping at the first that fails. Ops: tree {depth?}, find, press, set {attribute? (AXValue), value | secret}, focus, keys {keys: \"cmd+shift+g\"}, type {text | secret}, wait {timeout_ms?, gone?}. `app` is a name or bundle id, the front one if left out. secret is one of the user's vault secrets by reference (like card/main.number, or a login's name.password), put in straight from the vault without passing through you: set puts it in the matched field (the focused one without match), type types it wherever the cursor is (a terminal, a dialog, a field Accessibility can't set). Results say only how many characters went in, and it's masked wherever an app shows it back.",
       "driving its apps is",
     ),
     input: Schema.Record(Schema.String, Schema.Unknown),
@@ -605,7 +606,19 @@ const ui = tool(
     task(async () => {
       guard("drive its apps", input)
       const keyed = /"op":"(?:keys|type)"/u.test(JSON.stringify(input))
-      const result = await hands("ui", input)
+      const steps = Array.isArray(input.steps) ? input.steps : [input]
+      const refs = [
+        ...new Set(steps.map((step) => str(obj(step).secret)).filter((ref) => ref !== "")),
+      ]
+      const where = str(input.app) || "the app in front"
+      const released = await Promise.all(
+        refs.map(async (ref) => {
+          const { value } = await vault.release(`macos-${machine}`, ref, `into ${where}`)
+          return [ref, value] as const
+        }),
+      )
+      const secrets = refs.length === 0 ? null : Object.fromEntries(released)
+      const result = await hands("ui", input, secrets)
       if (keyed) {
         posted = Date.now()
       }

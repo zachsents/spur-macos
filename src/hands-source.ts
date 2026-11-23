@@ -51,11 +51,11 @@ func clip(_ s: String?, _ max: Int) -> String? {
   return s.count > max ? String(s.prefix(max)) + "\u{2026}" : s
 }
 
-func describe(_ e: AXUIElement) -> String {
+func describe(_ e: AXUIElement, value: Bool = true) -> String {
   var line = text(e, "AXRole") ?? "?"
   if let t = text(e, "AXTitle") { line += " \"\(t.prefix(80))\"" }
   if let d = text(e, "AXDescription") { line += " desc=\"\(d.prefix(80))\"" }
-  if let v = valueText(e) { line += " value=\"\(v.prefix(80))\"" }
+  if value, let v = valueText(e) { line += " value=\"\(v.prefix(80))\"" }
   if let i = text(e, "AXIdentifier") { line += " id=\"\(i.prefix(80))\"" }
   if let enabled = attribute(e, "AXEnabled"), CFGetTypeID(enabled) == CFBooleanGetTypeID(),
     !CFBooleanGetValue((enabled as! CFBoolean))
@@ -352,12 +352,30 @@ func step(_ s: [String: Any], _ defaultApp: String?) throws -> Any {
   }
   switch op {
   case "tree": return ["app": name, "tree": outline(root, s["depth"] as? Int ?? 12)]
-  case "find": return ["app": name, "found": search(root, m).prefix(50).map(describe)]
+  case "find": return ["app": name, "found": search(root, m).prefix(50).map { describe($0) }]
   case "press":
     let e = try nth()
     let err = AXUIElementPerformAction(e, "AXPress" as CFString)
     if err != .success { throw fail("pressing it failed (\(err.rawValue))") }
     return ["pressed": describe(e)]
+  case "set" where s["secret"] is String:
+    let e: AXUIElement
+    if m.empty {
+      guard let raw = attribute(root, "AXFocusedUIElement") else { throw fail("Nothing has focus in \(name)") }
+      e = raw as! AXUIElement
+    } else {
+      e = try nth()
+    }
+    let value = try secret(s)
+    try setAttribute(e, "AXValue", value)
+    // A secure field reads back as dots, one for each character, or as nothing at all.
+    let held = (text(e, "AXValue") ?? "").count
+    let secure = text(e, "AXSubrole") == "AXSecureTextField"
+    if held != value.count && !(secure && held == 0) {
+      try? setAttribute(e, "AXValue", "")
+      throw fail("\(describe(e, value: false)) held \(held) characters after setting it, not its \(value.count), so I emptied it: try type")
+    }
+    return ["set": "AXValue", "on": describe(e, value: false), "secret": s["secret"] as! String, "characters": value.count]
   case "set":
     guard let value = s["value"] else { throw fail("set needs value") }
     let attr = s["attribute"] as? String ?? "AXValue"
@@ -373,6 +391,10 @@ func step(_ s: [String: Any], _ defaultApp: String?) throws -> Any {
     guard let keys = s["keys"] as? String else { throw fail("keys needs keys, like cmd+shift+g") }
     try pressKeys(keys)
     return ["pressed": keys]
+  case "type" where s["secret"] is String:
+    let value = try secret(s)
+    typeText(value)
+    return ["typed": value.count, "secret": s["secret"] as! String]
   case "type":
     guard let t = s["text"] as? String else { throw fail("type needs text") }
     typeText(t)
@@ -391,7 +413,20 @@ func step(_ s: [String: Any], _ defaultApp: String?) throws -> Any {
   }
 }
 
+/// The vault's secrets a ui call puts in, by reference, read from standard input (never the command line).
+var secrets: [String: String] = [:]
+
+func secret(_ s: [String: Any]) throws -> String {
+  let ref = s["secret"] as? String ?? ""
+  guard let value = secrets[ref] else { throw fail("\(ref) didn't come from the vault") }
+  return value
+}
+
 func ui(_ args: [String: Any]) throws -> Any {
+  if args["secrets"] as? Bool == true {
+    let given = FileHandle.standardInput.readDataToEndOfFile()
+    secrets = (try? JSONSerialization.jsonObject(with: given)) as? [String: String] ?? [:]
+  }
   let defaultApp = args["app"] as? String
   let steps = args["steps"] as? [[String: Any]] ?? [args]
   var done: [Any] = []

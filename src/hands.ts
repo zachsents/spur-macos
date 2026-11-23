@@ -6,6 +6,7 @@ import { homedir, tmpdir } from "node:os"
 import path from "node:path"
 
 import { source } from "./hands-source.ts"
+import { masked } from "./vault.ts"
 
 const version = createHash("sha256").update(source).digest("hex").slice(0, 12)
 let built: Promise<string> | null = null
@@ -43,11 +44,28 @@ export const helper = async () => {
 
 const parse: (json: string) => unknown = JSON.parse
 
-/** Runs one op; fails with its error. */
-export const hands = async (op: string, args: Record<string, unknown> = {}): Promise<unknown> => {
+/**
+ * Runs one op; fails with its error. `secrets` (reference → value, from the vault) go in on its
+ * standard input, never its command line, and every secret that went in is masked in what it says.
+ */
+export const hands = async (
+  op: string,
+  args: Record<string, unknown> = {},
+  secrets: Record<string, string> | null = null,
+): Promise<unknown> => {
   const bin = await helper()
-  const proc = Bun.spawn([bin, op, JSON.stringify(args)], { stdout: "pipe", stderr: "ignore" })
-  const [code, out] = await Promise.all([proc.exited, new Response(proc.stdout).text()])
+  const argv = [bin, op, JSON.stringify(secrets === null ? args : { ...args, secrets: true })]
+  const proc = Bun.spawn(argv, {
+    stdin: secrets === null ? "ignore" : "pipe",
+    stdout: "pipe",
+    stderr: "ignore",
+  })
+  if (secrets !== null && proc.stdin) {
+    await proc.stdin.write(JSON.stringify(secrets))
+    await proc.stdin.end()
+  }
+  const [code, raw] = await Promise.all([proc.exited, new Response(proc.stdout).text()])
+  const out = masked(raw)
   const value = out.trim() === "" ? null : parse(out)
   if (code !== 0) {
     const said =
