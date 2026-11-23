@@ -1,7 +1,8 @@
 // The vitals widget's page, one HTML document with its script bundled in (an MCP App view loads
 // nothing from outside): this Mac's picture between its meters, on the cell's own background, in
 // Switch's inks and type, which a host's theme variables of the same names replace. Everything is
-// in hundredths of its width, so it scales with its cell, and its height is exactly what it draws:
+// in hundredths of its width, so it scales with its frame's width (never its height, which it sets
+// itself through size-changed), and its height is exactly what it draws:
 // its taller side, top-aligned. Its plate holds the Mac's whole name, its type made smaller to fit.
 import path from "node:path"
 import { view } from "switch-ext-kit"
@@ -31,7 +32,7 @@ const style = (battery: boolean) => `
 --off:var(--color-line-1,light-dark(#c8c8c8,#2c2c2c));--red:var(--color-red,#d42a1f);
 --sans:var(--font-sans,-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",sans-serif);
 --sign:var(--font-sign,"DIN Condensed","DINCondensed-Bold","Barlow Condensed",sans-serif);
---u:min(1vw,${ratio(battery)}vh);--shadow:.28;--rim:light-dark(rgb(0 0 0/.16),transparent)}
+--u:1vw;--shadow:.28;--rim:light-dark(rgb(0 0 0/.16),transparent)}
 :root[data-theme=dark]{--shadow:.8}
 html,body{margin:0;height:100%;overflow:hidden;background:transparent}
 body{visibility:hidden;font-family:var(--sans);color:var(--ink);-webkit-font-smoothing:antialiased;-webkit-user-select:none;user-select:none;cursor:default}
