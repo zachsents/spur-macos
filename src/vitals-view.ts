@@ -148,7 +148,12 @@ const fitPlate = () => {
     plate.style.fontSize = `calc(${(room - pad) / text} * 2.9 * var(--u))`
   }
 }
-window.addEventListener("resize", fitPlate)
+// Laid out from the frame's real inner width: a hundredth of it is the page's unit.
+const page = document.documentElement
+new ResizeObserver(() => {
+  page.style.setProperty("--u", `${page.clientWidth / 100}px`)
+  fitPlate()
+}).observe(page)
 void document.fonts.ready.then(fitPlate)
 
 const show = (v: Vitals) => {

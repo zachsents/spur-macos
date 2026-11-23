@@ -36,7 +36,7 @@ const style = (battery: boolean) => `
 :root[data-theme=dark]{--shadow:.8}
 html,body{margin:0;height:100%;overflow:hidden;background:transparent}
 body{visibility:hidden;font-family:var(--sans);color:var(--ink);-webkit-font-smoothing:antialiased;-webkit-user-select:none;user-select:none;cursor:default}
-.vitals{box-sizing:border-box;height:calc(${height(battery)}*var(--u));display:grid;grid-template-columns:28fr 44fr 28fr;align-items:start;padding:calc(${PAD}*var(--u)) calc(3*var(--u))}
+.vitals{box-sizing:border-box;width:100%;overflow:hidden;height:calc(${height(battery)}*var(--u));display:grid;grid-template-columns:28fr 44fr 28fr;align-items:start;padding:calc(${PAD}*var(--u)) calc(3*var(--u))}
 .side{display:flex;flex-direction:column;gap:calc(${GAP}*var(--u));min-width:0}
 .mac{position:relative;align-self:stretch;margin:0;min-width:0;min-height:0}
 .mac svg{position:absolute;inset:0;width:100%;height:100%}
