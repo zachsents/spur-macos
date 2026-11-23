@@ -5,9 +5,10 @@
 // from three days of readings says how fast it's falling and in how many days it'll be low. What
 // grew between censuses counts what make_room cleared of it meanwhile, so a build folder built and
 // cleared between two still shows as grown.
-import { existsSync, readdirSync, readFileSync, rmSync, statfsSync, writeFileSync } from "node:fs"
+import { existsSync, readdirSync, readFileSync, rmSync, statfsSync } from "node:fs"
 import { homedir } from "node:os"
 import path from "node:path"
+import { writeFileAtomic } from "switch-ext-kit"
 
 export const GB = 1e9
 const HOUR = 3_600_000
@@ -318,7 +319,7 @@ export const outlook = (file: string) => {
     h = empty()
   }
   const save = () => {
-    writeFileSync(file, JSON.stringify(h))
+    writeFileAtomic(file, JSON.stringify(h))
   }
 
   const sample = (now: number, bytes: number) => {

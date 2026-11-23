@@ -1,7 +1,7 @@
 // The macOS extension as a stdio MCP server: what a host runs, from this Mac's extension folder.
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio"
 import { BunRuntime } from "@effect/platform-bun"
-import { AppEvents, Models, serve } from "switch-ext-kit"
+import { AppEvents, Models, OUTBOX_FILE, serve } from "switch-ext-kit"
 import { Effect, Layer } from "effect"
 
 import { machine, macosApp, watch } from "./app.ts"
@@ -17,5 +17,5 @@ BunRuntime.runMain(
       yield* Effect.forkScoped(watch)
       yield* done
     }),
-  ).pipe(Effect.provide(Layer.merge(AppEvents.layer(macosApp), Models.layer))),
+  ).pipe(Effect.provide(Layer.merge(AppEvents.layer(macosApp, OUTBOX_FILE), Models.layer))),
 )

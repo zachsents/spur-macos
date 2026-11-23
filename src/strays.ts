@@ -10,7 +10,8 @@
 // - unclaimed: anything else. Only reported.
 // Never stopped: launchd jobs, anything with a terminal, anything a keep rule matches, anything
 // younger than YOUNG. Each is checked again by pid and start just before TERM, then KILL.
-import { existsSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
+import { writeFileAtomic } from "switch-ext-kit"
 
 export const SHELL_GONE_S = 15 * 60
 export const WORK_IDLE_S = 24 * 3600
@@ -137,7 +138,7 @@ export const loadRules = (file: string): Rules => {
 }
 
 const save = (file: string, rules: Rules) => {
-  writeFileSync(file, JSON.stringify(rules))
+  writeFileAtomic(file, JSON.stringify(rules))
 }
 
 /** The kind of a unit, from what its members run and carry. */
