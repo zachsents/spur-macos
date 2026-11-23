@@ -337,9 +337,10 @@ const port = (drawing: Drawing, d: number, x: number, z: number, w: number, h: n
   const r = Math.min(w, h) / 2
   drawing.face({ at: [x, d / 2 + 0.04, z], ...FRONT }, w + 0.5, h + 0.5, r + 0.25, "#3a3b3e")
   drawing.face({ at: [x, d / 2 + 0.06, z], ...FRONT }, w, h, r, "#0e0e10")
-  if (w > h) {
-    // A USB-C port's tongue.
-    drawing.face({ at: [x, d / 2 + 0.08, z], ...FRONT }, w * 0.62, h * 0.28, h * 0.14, "#2a2b2e")
+  if (w !== h) {
+    // A USB-C port's tongue, along it.
+    const [tw, th] = w > h ? [w * 0.62, h * 0.28] : [w * 0.28, h * 0.62]
+    drawing.face({ at: [x, d / 2 + 0.08, z], ...FRONT }, tw, th, Math.min(tw, th) / 2, "#2a2b2e")
   }
 }
 
@@ -363,8 +364,8 @@ const APPLE_LEAF = "M.02 -.26C.02 -.4 .12 -.48 .2 -.48C.2 -.36 .12 -.27 .02 -.26
 const markCopy = (dy: number, fill: string) =>
   `<g transform="translate(0 ${dy.toFixed(4)})"><path d="${APPLE_BODY}" fill="${fill}"/><path d="${APPLE_LEAF}" fill="${fill}"/></g>`
 
-/** The mark debossed in a box's top at height `z`, `size` mm tall: its back edge in shadow, its
- * front edge catching the light. */
+/** The mark debossed in a box's top at height `z`, `size` mm tall: near black, as Apple's photos
+ * of the Mac mini show it, its front edge catching the light. */
 const mark = (drawing: Drawing, z: number, size: number, top: string) => {
   const id = `m${drawing.defs.length}`
   drawing.defs.push(
@@ -373,14 +374,16 @@ const mark = (drawing: Drawing, z: number, size: number, top: string) => {
   const t = `matrix(${(C * size).toFixed(3)} ${(size / 2).toFixed(3)} ${(-C * size).toFixed(3)} ${(size / 2).toFixed(3)} 0 ${(-z).toFixed(3)})`
   const shift = 0.45 / size
   drawing.parts.push(
-    `<g transform="${t}"><g mask="url(#${id})">${markCopy(shift, tint(top, 0.45))}${markCopy(-shift, tint(top, -0.22))}${markCopy(0, tint(top, -0.05))}</g></g>`,
+    `<g transform="${t}"><g mask="url(#${id})">${markCopy(shift, tint(top, 0.5))}${markCopy(0, tint(top, -0.86))}</g></g>`,
   )
 }
 
 /** Each box's corners (of its width), the foot it stands on, how far its underside is set in, and
- * how far its top edge rounds over, mm. The old mini stands on a round base. */
+ * how far its top edge rounds over, mm. The old mini stands on a round base. The Mac mini's, from
+ * Apple's tech specs pictures (support.apple.com/121555): corners about 18% of its width, a sharp
+ * top edge, and a dark vented foot about 6 mm tall, set in about 10 mm. */
 const BOXES = {
-  mini: { corner: 0.16, foot: 2.5, inset: 6, round: 3 },
+  mini: { corner: 0.18, foot: 6, inset: 10, round: 0 },
   "mini-2010": { corner: 0.13, foot: 3.5, inset: 19.7, round: 2 },
   studio: { corner: 0.15, foot: 5, inset: 8, round: 3 },
 } as const
@@ -402,10 +405,17 @@ const box = (look: Look & { readonly form: keyof typeof BOXES }) => {
     UNDERSIDE,
   )
   if (look.form === "mini") {
-    // The vent ring round its recessed foot: slots in the dark, under the shell's edge.
-    const vents = frontRun(drawing, w - 2 * inset + 0.1, d - 2 * inset + 0.1, under, foot * 0.55)
+    // The vents round its foot: dark slots, upright, close together.
+    const run = frontRun(drawing, w - 2 * inset + 0.1, d - 2 * inset + 0.1, under, 0)
+    const top = frontRun(drawing, w - 2 * inset + 0.1, d - 2 * inset + 0.1, under, foot)
+    const slots = run.flatMap(([x, y], i) => {
+      const [tx, ty] = top[i] ?? [x, y]
+      return i % 2 === 0
+        ? [`M${x.toFixed(2)} ${(y - 0.8).toFixed(2)}L${tx.toFixed(2)} ${(ty + 0.8).toFixed(2)}`]
+        : []
+    })
     drawing.parts.push(
-      `<polyline points="${polyline(vents)}" fill="none" stroke="#000" stroke-width="${(foot * 0.5).toFixed(2)}" stroke-dasharray="1.6 1.1" opacity=".75"/>`,
+      `<path d="${slots.join("")}" stroke="#000" stroke-width="1.1" stroke-linecap="round" opacity=".8"/>`,
     )
   }
   drawing.slab({ at: [0, 0, foot], ...FLAT }, w, d, r, h - foot, metal, round)
@@ -414,13 +424,14 @@ const box = (look: Look & { readonly form: keyof typeof BOXES }) => {
     drawing.parts.push(
       `<polyline points="${polyline(frontRun(drawing, w, d, r, foot + 0.3))}" fill="none" stroke="#000" stroke-width=".9" opacity=".22" stroke-linecap="round"/>`,
     )
-    mark(drawing, h, w * 0.2, shade(metal, [0, 0, 1]))
-    // Two USB-C ports and the headphone jack toward the left of its front; the status light right.
-    const z = foot + (h - foot) * 0.42
-    port(drawing, d, -w * 0.27, z, 8.4, 2.7)
-    port(drawing, d, -w * 0.18, z, 8.4, 2.7)
-    port(drawing, d, -w * 0.09, z, 3.6, 3.6)
-    drawing.face({ at: [w * 0.33, d / 2 + 0.06, z], ...FRONT }, 1.1, 1.1, 0.55, "#cfe9d6")
+    mark(drawing, h, w * 0.29, shade(metal, [0, 0, 1]))
+    // As Apple's front picture places them: the two USB-C ports upright toward the left, the
+    // status light right of centre and the headphone jack beyond it, all a little below halfway.
+    const z = foot + (h - foot) * 0.37
+    port(drawing, d, -w * 0.293, z, 3, 9)
+    port(drawing, d, -w * 0.176, z, 3, 9)
+    drawing.face({ at: [w * 0.193, d / 2 + 0.06, z], ...FRONT }, 1.6, 1.6, 0.8, "#f4fbf6")
+    port(drawing, d, w * 0.284, z, 4.3, 4.3)
   } else if (look.form === "studio") {
     // Two USB-C ports, and the card slot.
     const z = foot + 18
