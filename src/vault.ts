@@ -93,6 +93,14 @@ const ownKey = async () => {
   return made
 }
 
+/** What the user knows this extension as on this Mac: "the Mac extension on <its name>". */
+const label = async () => {
+  const proc = Bun.spawn(["scutil", "--get", "ComputerName"], { stdout: "pipe", stderr: "ignore" })
+  const said = await new Response(proc.stdout).text()
+  const computer = said.trim()
+  return computer === "" ? "the Mac extension" : `the Mac extension on ${computer}`
+}
+
 let mine: ReturnType<typeof ownKey> | null = null
 
 /** This Mac's key, allowed by the vault under `name`. */
@@ -102,7 +110,11 @@ const allowed = async (name: string) => {
     mine = null
     throw error
   })
-  const r = await call("extension_register", { extension: name, key: own.key })
+  const r = await call("extension_register", {
+    extension: name,
+    key: own.key,
+    label: await label(),
+  })
   if (r.status !== "active") {
     throw new Error(
       `The vault hasn't allowed ${name} yet: the user approves it (code ${String(r.code)}) in the Secrets app or the queue`,
