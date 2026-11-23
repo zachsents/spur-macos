@@ -25,11 +25,12 @@ import * as vault from "./vault.ts"
 import { load, noteDisk } from "./load.ts"
 import { thisMac } from "./look.ts"
 import { askedField, guard, guardExec, marked } from "./personal.ts"
+import { beat, Heartbeat, kept, said, watch as watched } from "./health.ts"
 import { check, grants } from "./protected.ts"
 import * as strays from "./strays.ts"
-import { Device, moreTools, watchDevice } from "./more.ts"
+import { Device, deviceLooked, moreTools, watchDevice } from "./more.ts"
 import * as procs from "./procs.ts"
-import { diskEvents, diskTool, makeRoomTool, watchDisk } from "./upkeep.ts"
+import { diskEvents, diskLooked, diskTool, makeRoomTool, watchDisk } from "./upkeep.ts"
 import { ratio, vitalsPage } from "./vitals-page.ts"
 import { alerting, alerts, notable, read, reading } from "./vitals.ts"
 import type { Reading } from "./vitals.ts"
@@ -162,17 +163,20 @@ const strip = ({ pid: _, ...g }: Glance) => g
 const samePlace = (a: Glance | null, b: Glance) =>
   a !== null && a.bundle === b.bundle && a.window === b.window
 
+const attentionLooked = watched("attention", 60_000, 5)
+
 const watchAttention = Effect.gen(function* watching() {
   const events = yield* AppEvents
   let last = ""
   let lastAt = 0
   for (;;) {
     yield* Effect.sleep("2 seconds")
-    const looked = yield* Effect.option(task(glance))
-    if (looked._tag === "None") {
+    const looked = yield* Effect.result(task(glance))
+    yield* attentionLooked(looked._tag === "Failure" ? said(looked.failure) : null)
+    if (looked._tag === "Failure") {
       continue
     }
-    const { seen, idle, locked } = looked.value
+    const { seen, idle, locked } = looked.success
     const on = tracking()
     const active = idle < IDLE_S && !locked
     if (on && !samePlace(current, seen)) {
@@ -217,21 +221,26 @@ const page = vitalsPage(mac.name, mac.look, mac.battery)
 
 let latest: Reading | null = null
 
+const vitalsLooked = watched("vitals", 5 * 60_000, 2)
+
 const watchVitals = Effect.gen(function* watching() {
   const events = yield* AppEvents
   let sent: Reading | null = null
   let sentAt = 0
   for (;;) {
-    const r = yield* Effect.option(task(async () => await read(machine)))
-    if (r._tag === "Some") {
-      latest = r.value
-      noteDisk(r.value.diskFreeGb)
-      if (notable(sent, r.value) || Date.now() - sentAt >= 300_000) {
-        sent = r.value
+    const r = yield* Effect.result(task(async () => await read(machine)))
+    yield* vitalsLooked(r._tag === "Failure" ? said(r.failure) : null)
+    if (r._tag === "Success") {
+      latest = r.success
+      noteDisk(r.success.diskFreeGb)
+      if (notable(sent, r.success) || Date.now() - sentAt >= 300_000) {
+        sent = r.success
         sentAt = Date.now()
-        yield* events.emit(Vitals.make(r.value)).pipe(Effect.ignore)
+        yield* events.emit(Vitals.make(r.success)).pipe(Effect.ignore)
       }
     }
+    // This Mac's heartbeat goes from here: it stops if this watch does.
+    yield* beat
     yield* Effect.sleep("1 minute")
   }
 })
@@ -248,14 +257,17 @@ const access = async () => {
   }
 }
 
+const permissionsLooked = watched("permissions", 16 * 60_000)
+
 const watchPermissions = Effect.gen(function* watching() {
   const events = yield* AppEvents
   let last = ""
   for (;;) {
-    const a = yield* Effect.option(task(access))
-    if (a._tag === "Some" && JSON.stringify(a.value) !== last) {
-      last = JSON.stringify(a.value)
-      yield* events.emit(Permissions.make(a.value)).pipe(Effect.ignore)
+    const a = yield* Effect.result(task(access))
+    yield* permissionsLooked(a._tag === "Failure" ? said(a.failure) : null)
+    if (a._tag === "Success" && JSON.stringify(a.success) !== last) {
+      last = JSON.stringify(a.success)
+      yield* events.emit(Permissions.make(a.success)).pipe(Effect.ignore)
     }
     yield* Effect.sleep("5 minutes")
   }
@@ -265,24 +277,40 @@ const watchPermissions = Effect.gen(function* watching() {
 
 const sweep = async () => {
   const found = await strays.find(RULES)
-  return await strays.stop(found.filter((s) => s.stopInS === 0))
+  const unread = found.filter((s) => s.unread !== undefined)
+  const stopped = await strays.stop(found.filter((s) => s.stopInS === 0))
+  return {
+    stopped,
+    unread:
+      unread.length === 0 ? null : `${unread.length} unread, kept: ${unread[0]?.unread ?? ""}`,
+  }
 }
+
+const straysLooked = watched("strays", 16 * 60_000)
 
 const watchStrays = Effect.gen(function* watching() {
   const events = yield* AppEvents
   for (;;) {
     yield* Effect.sleep("5 minutes")
-    const stopped = yield* Effect.option(task(sweep))
-    if (stopped._tag === "Some" && stopped.value.length > 0) {
-      const list = stopped.value.map((s) => ({ pid: s.pid, kind: s.kind, what: s.what }))
+    const swept = yield* Effect.result(task(sweep))
+    yield* straysLooked(swept._tag === "Failure" ? said(swept.failure) : swept.success.unread)
+    if (swept._tag === "Success" && swept.success.stopped.length > 0) {
+      const list = swept.success.stopped.map((s) => ({ pid: s.pid, kind: s.kind, what: s.what }))
       yield* events.emit(StraysStopped.make({ machine, stopped: list })).pipe(Effect.ignore)
     }
   }
 })
 
-/** What this extension does on its own while it runs. */
+/** What this extension does on its own while it runs; one watch's crash leaves the others. */
 export const watch = Effect.all(
-  [watchAttention, watchVitals, watchPermissions, watchStrays, watchDisk, watchDevice],
+  [
+    kept(attentionLooked, watchAttention),
+    kept(vitalsLooked, watchVitals),
+    kept(permissionsLooked, watchPermissions),
+    kept(straysLooked, watchStrays),
+    kept(diskLooked, watchDisk),
+    kept(deviceLooked, watchDevice),
+  ],
   {
     concurrency: "unbounded",
     discard: true,
@@ -760,7 +788,7 @@ export const macosApp = defineApp({
     makeRoomTool,
     ...moreTools,
   ],
-  events: [Vitals, Attention, Permissions, StraysStopped, ...diskEvents, Device],
+  events: [Vitals, Attention, Permissions, StraysStopped, ...diskEvents, Device, Heartbeat],
   widgets: [
     {
       name: "vitals",

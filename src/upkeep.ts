@@ -7,6 +7,7 @@ import { Effect, Schema } from "effect"
 
 import { AppEvents, defineEvent, tool } from "switch-ext-kit"
 import { census, free, GB, outlook } from "./disk.ts"
+import { said, watch } from "./health.ts"
 import { byHolder, byWork, freedOf, makeRoom, scan } from "./sweeps.ts"
 import type { ByWork, Cleared, Swept } from "./sweeps.ts"
 
@@ -106,19 +107,27 @@ const takeCensus = async () => {
   return latest
 }
 
+// A census can take many minutes (du over every holder); a stall is longer than that.
+export const diskLooked = watch("disk", 30 * MINUTE, 2)
+
 /** The disk's watch, while the extension runs. */
 export const watchDisk = Effect.gen(function* watching() {
   const events = yield* AppEvents
   const emit = (e: Parameters<typeof events.emit>[0]) => events.emit(e).pipe(Effect.ignore)
   let counted = 0
   let over = ""
+  // What failed last time, until it works again: the census is tried again each minute until it
+  // does, what each work holds every ten.
+  let censusFailed: string | null = null
+  let worksFailed: string | null = null
   for (;;) {
     const now = Date.now()
     look.sample(now, free())
     if (look.censusDue(now)) {
-      const facts = yield* Effect.option(task(async () => await exclusive(takeCensus)))
-      if (facts._tag === "Some") {
-        yield* emit(DiskUse.make({ machine, ...facts.value }))
+      const facts = yield* Effect.result(task(async () => await exclusive(takeCensus)))
+      censusFailed = facts._tag === "Failure" ? `census: ${said(facts.failure)}` : null
+      if (facts._tag === "Success") {
+        yield* emit(DiskUse.make({ machine, ...facts.success }))
         const w = look.warning(machine, now, free())
         if (w !== null) {
           yield* emit(DiskLow.make(w))
@@ -127,11 +136,12 @@ export const watchDisk = Effect.gen(function* watching() {
     }
     if (now - counted >= 10 * MINUTE) {
       counted = now
-      const done = yield* Effect.option(
+      const done = yield* Effect.result(
         task(async () => await exclusive(async () => await byWork(await scan()))),
       )
-      if (done._tag === "Some") {
-        works = done.value
+      worksFailed = done._tag === "Failure" ? `by work: ${said(done.failure)}` : null
+      if (done._tag === "Success") {
+        works = done.success
         const overBudget = works
           .filter((w) => w.overBudget)
           .map((w) => ({ worktree: w.worktree, gb: w.gb, running: w.running }))
@@ -142,6 +152,8 @@ export const watchDisk = Effect.gen(function* watching() {
         }
       }
     }
+    const failed = [censusFailed, worksFailed].filter((f) => f !== null)
+    yield* diskLooked(failed.length === 0 ? null : failed.join(", "))
     yield* Effect.sleep("1 minute")
   }
 })

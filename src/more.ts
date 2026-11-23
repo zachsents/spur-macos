@@ -4,6 +4,7 @@ import { Effect, Schema } from "effect"
 
 import { AppEvents, defineEvent, tool } from "switch-ext-kit"
 import * as device from "./device.ts"
+import { said, watch } from "./health.ts"
 import * as procs from "./procs.ts"
 import { profile } from "./profile.ts"
 
@@ -25,6 +26,8 @@ const lookAgain = async (was: device.Facts): Promise<device.Facts> => {
   }
 }
 
+export const deviceLooked = watch("device", 3 * 60_000, 2)
+
 /** Prompts on screen looked for every half minute; the rest every five, an event when it changes. */
 export const watchDevice = Effect.gen(function* watching() {
   const events = yield* AppEvents
@@ -35,20 +38,21 @@ export const watchDevice = Effect.gen(function* watching() {
     const now = Date.now()
     const was: device.Facts | null = facts
     const due: boolean = was === null || now - full >= 300_000
-    const read = yield* Effect.option(
+    const read = yield* Effect.result(
       task(async (): Promise<device.Facts> =>
         due || was === null ? await device.read(machine) : await lookAgain(was),
       ),
     )
-    if (read._tag === "Some") {
+    yield* deviceLooked(read._tag === "Failure" ? said(read.failure) : null)
+    if (read._tag === "Success") {
       if (due) {
         full = now
       }
-      facts = read.value
-      const key = device.steady(read.value)
+      facts = read.success
+      const key = device.steady(read.success)
       if (key !== last) {
         last = key
-        yield* events.emit(Device.make(read.value)).pipe(Effect.ignore)
+        yield* events.emit(Device.make(read.success)).pipe(Effect.ignore)
       }
     }
     yield* Effect.sleep("30 seconds")

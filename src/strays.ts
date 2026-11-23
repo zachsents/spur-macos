@@ -57,6 +57,8 @@ export interface Stray {
   readonly pids: readonly number[]
   /** When it's due to be stopped (s from now), or null: only reported. */
   readonly stopInS: number | null
+  /** Why its kind couldn't be read: it's kept, only reported. */
+  readonly unread?: string
 }
 
 const run = async (argv: readonly string[]) => {
@@ -201,16 +203,24 @@ export const find = async (file: string): Promise<readonly Stray[]> => {
       const key = `${p.pid}:${p.args}`
       const first = rules.seen[key] ?? now
       seen[key] = first
-      const { kind, what } = await kindOf(unit)
-      const inUse = kind === "exec" ? await connected(unit.map((u) => u.pid)) : false
-      const due = p.ageS < YOUNG_S ? null : dueIn(kind, (now - first) / 1000, p.ageS, inUse)
-      return {
-        pid: p.pid,
-        kind,
-        what: `${what}: ${p.args.slice(0, 160)}`,
-        ageS: p.ageS,
-        pids: unit.map((u) => u.pid),
-        stopInS: due === null ? null : Math.max(0, Math.round(due)),
+      const pids = unit.map((u) => u.pid)
+      try {
+        const { kind, what } = await kindOf(unit)
+        const inUse = kind === "exec" ? await connected(pids) : false
+        const due = p.ageS < YOUNG_S ? null : dueIn(kind, (now - first) / 1000, p.ageS, inUse)
+        return {
+          pid: p.pid,
+          kind,
+          what: `${what}: ${p.args.slice(0, 160)}`,
+          ageS: p.ageS,
+          pids,
+          stopInS: due === null ? null : Math.max(0, Math.round(due)),
+        }
+      } catch (error) {
+        // One unit that can't be read is kept and said, never a reason to skip the rest.
+        const unread = error instanceof Error ? error.message : String(error)
+        const what = `unclaimed: ${p.args.slice(0, 160)}`
+        return { pid: p.pid, kind: "unclaimed", what, ageS: p.ageS, pids, stopInS: null, unread }
       }
     }),
   )
