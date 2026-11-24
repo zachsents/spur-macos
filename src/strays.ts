@@ -1,7 +1,11 @@
 // Strays, ported from Switchboard's proc-sweep (strays.rs): processes left running on this Mac by
 // agent turns and execs once what started them is gone, and stopping the ones provably done with.
 // A stray is a process of this user left to launchd (its parent is pid 1), not a launchd job,
-// with no terminal, not macOS's or an app's; with what it started, it's one unit. By kind:
+// with no terminal; with what it started, it's one unit. One that carries an agent's work's mark
+// (SWITCH_WORK, which Switch gives each turn and script and all they start) is one whatever it runs;
+// one without is a stray only when it isn't macOS's or an app's. By kind:
+// - work: one carrying its work's mark. Stopped WORK_ENDED after it's first seen with its work over
+//   (the work neither running, nor waiting on a watch or script of its own, nor carried on).
 // - claude-shell: a Claude Code Bash shell whose session is gone. Stopped SHELL_GONE after.
 // - exec: started by this extension's exec (SWITCH_EXEC), like a dev server. Stopped once it's run
 //   WORK_IDLE and nothing is connected to it.
@@ -14,6 +18,7 @@ import { existsSync, readFileSync } from "node:fs"
 import { writeFileAtomic } from "switch-ext-kit"
 
 export const SHELL_GONE_S = 15 * 60
+export const WORK_ENDED_S = 15 * 60
 export const WORK_IDLE_S = 24 * 3600
 export const LEFTOVER_S = 2 * 3600
 const YOUNG_S = 300
@@ -46,7 +51,10 @@ export interface Proc {
   readonly args: string
 }
 
-export type Kind = "claude-shell" | "exec" | "leftover" | "unclaimed"
+export type Kind = "work" | "claude-shell" | "exec" | "leftover" | "unclaimed"
+
+/** Which of these works still go on; null when that can't be told. */
+export type Live = (works: readonly string[]) => Promise<ReadonlySet<string> | null>
 
 export interface Stray {
   readonly pid: number
@@ -104,8 +112,18 @@ const launchdJobs = async () => {
   )
 }
 
+// A process's environment, after its command (macOS shows a program's to its user, though not a
+// platform binary's, sh or sleep: a unit's other members still show theirs).
 const envOf = async (pid: number) =>
   await run(["ps", "-E", "-ww", "-o", "command=", "-p", String(pid)])
+
+const WORK = /(?:^|\s)SWITCH_WORK=(?<work>\S+)/u
+
+/** The work a unit's members carry the mark of, or null. */
+const workOf = async (unit: readonly Proc[]) => {
+  const envs = await Promise.all(unit.map(async (p) => await envOf(p.pid)))
+  return envs.map((e) => WORK.exec(e)?.groups?.work).find((w) => w !== undefined) ?? null
+}
 
 const connected = async (pids: readonly number[]) => {
   const out = await run(["lsof", "-a", "-nP", "-iTCP", "-sTCP:ESTABLISHED", "-p", pids.join(",")])
@@ -144,7 +162,19 @@ const save = (file: string, rules: Rules) => {
 }
 
 /** The kind of a unit, from what its members run and carry. */
-const kindOf = async (unit: readonly Proc[]): Promise<{ kind: Kind; what: string }> => {
+const kindOf = async (
+  unit: readonly Proc[],
+  work: string | null,
+  going: ReadonlySet<string> | null,
+): Promise<{ kind: Kind; what: string; over?: boolean }> => {
+  if (work !== null) {
+    if (going === null) {
+      return { kind: "work", what: `${work}'s, whose state can't be told` }
+    }
+    return going.has(work)
+      ? { kind: "work", what: `${work}'s, which goes on` }
+      : { kind: "work", what: `left by ${work}, which is over`, over: true }
+  }
   for (const p of unit) {
     const leftover = LEFTOVERS.find(([, re]) => re.test(p.args))
     if (leftover !== undefined) {
@@ -161,7 +191,10 @@ const kindOf = async (unit: readonly Proc[]): Promise<{ kind: Kind; what: string
   return { kind: "unclaimed", what: "unclaimed" }
 }
 
-const dueIn = (kind: Kind, firstSeenS: number, ageS: number, inUse: boolean) => {
+const dueIn = (kind: Kind, firstSeenS: number, ageS: number, inUse: boolean, over: boolean) => {
+  if (kind === "work") {
+    return over ? WORK_ENDED_S - firstSeenS : null
+  }
   if (kind === "claude-shell") {
     return SHELL_GONE_S - firstSeenS
   }
@@ -175,7 +208,7 @@ const dueIn = (kind: Kind, firstSeenS: number, ageS: number, inUse: boolean) => 
 }
 
 /** Every stray now, and the rules file updated with when each was first seen. */
-export const find = async (file: string): Promise<readonly Stray[]> => {
+export const look = async (file: string, live: Live): Promise<readonly Stray[]> => {
   const rules = loadRules(file)
   const [all, jobs] = await Promise.all([processes(), launchdJobs()])
   const kids = new Map<number, Proc[]>()
@@ -185,29 +218,40 @@ export const find = async (file: string): Promise<readonly Stray[]> => {
   const tree = (p: Proc): Proc[] => [p, ...(kids.get(p.pid) ?? []).flatMap(tree)]
   const now = Date.now()
   const seen: Record<string, number> = {}
-  const candidates = all.filter((p) => {
-    const exe = p.args.split(" ")[0] ?? ""
-    const orphan = p.ppid === 1 && p.tty === "??" && !jobs.has(p.pid)
-    return (
-      orphan &&
-      !SYSTEM.test(exe) &&
-      !APP.test(p.args) &&
-      !NOT_OURS.test(p.args) &&
+  const orphans = all.filter(
+    (p) =>
+      p.ppid === 1 &&
+      p.tty === "??" &&
+      !jobs.has(p.pid) &&
       p.pid !== process.pid &&
-      !rules.keep.some((k) => p.args.includes(k))
+      !rules.keep.some((k) => p.args.includes(k)),
+  )
+  const works = new Map(
+    await Promise.all(orphans.map(async (p) => [p.pid, await workOf(tree(p))] as const)),
+  )
+  const candidates = orphans.filter((p) => {
+    const exe = p.args.split(" ")[0] ?? ""
+    return (
+      (works.get(p.pid) ?? null) !== null ||
+      (!SYSTEM.test(exe) && !APP.test(p.args) && !NOT_OURS.test(p.args))
     )
   })
+  const marked = [...new Set([...works.values()].filter((w) => w !== null))]
+  const going = marked.length === 0 ? new Set<string>() : await live(marked)
   const found = await Promise.all(
     candidates.map(async (p): Promise<Stray> => {
       const unit = tree(p)
       const key = `${p.pid}:${p.args}`
       const first = rules.seen[key] ?? now
-      seen[key] = first
       const pids = unit.map((u) => u.pid)
       try {
-        const { kind, what } = await kindOf(unit)
+        const { kind, what, over = false } = await kindOf(unit, works.get(p.pid) ?? null, going)
+        // A work's process is first seen once its work is over: its wait starts then.
+        if (kind !== "work" || over) {
+          seen[key] = first
+        }
         const inUse = kind === "exec" ? await connected(pids) : false
-        const due = p.ageS < YOUNG_S ? null : dueIn(kind, (now - first) / 1000, p.ageS, inUse)
+        const due = p.ageS < YOUNG_S ? null : dueIn(kind, (now - first) / 1000, p.ageS, inUse, over)
         return {
           pid: p.pid,
           kind,

@@ -275,8 +275,54 @@ const watchPermissions = Effect.gen(function* watching() {
 
 // Strays, swept every five minutes.
 
+/** Works still going on: running, waiting on a watch or script of their own, or to be carried on. */
+const GOING = new Set(["running", "waiting", "limited", "interrupted"])
+
+/**
+ * Which of these works go on, from the brain's work list (its query tool, as a widget calls it); null
+ * when the core can't say.
+ */
+const live: strays.Live = async (works) => {
+  try {
+    const core = process.env.SWITCH_URL ?? "http://127.0.0.1:4871"
+    const r = await fetch(`${core}/widgets/brain/query`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        ...(process.env.SWITCH_TOKEN !== undefined && {
+          authorization: `Bearer ${process.env.SWITCH_TOKEN}`,
+        }),
+      },
+      body: JSON.stringify({
+        from: "work",
+        where: [{ field: "thread", op: "in", value: works }],
+        fields: ["thread", "status"],
+        limit: 500,
+      }),
+      signal: AbortSignal.timeout(30_000),
+    })
+    const body: unknown = await r.json()
+    const rows = Schema.decodeUnknownOption(WorkRows)(body)
+    if (!r.ok || rows._tag === "None" || rows.value.isError === true) {
+      return null
+    }
+    return new Set(
+      rows.value.structuredContent.rows.filter((w) => GOING.has(w.status)).map((w) => w.thread),
+    )
+  } catch {
+    return null
+  }
+}
+
+const WorkRows = Schema.Struct({
+  isError: Schema.optionalKey(Schema.Boolean),
+  structuredContent: Schema.Struct({
+    rows: Schema.Array(Schema.Struct({ thread: Schema.String, status: Schema.String })),
+  }),
+})
+
 const sweep = async () => {
-  const found = await strays.find(RULES)
+  const found = await strays.look(RULES, live)
   const unread = found.filter((s) => s.unread !== undefined)
   const stopped = await strays.stop(found.filter((s) => s.stopInS === 0))
   return {
@@ -727,10 +773,10 @@ const straysTool = tool(
   "strays",
   {
     description:
-      "Processes agent turns and execs left running on this Mac, by kind (claude-shell, exec, leftover, unclaimed), with when each is due to be stopped; unclaimed ones are only reported. Swept every five minutes.",
+      "Processes agent turns and execs left running on this Mac, by kind (work, claude-shell, exec, leftover, unclaimed), with when each is due to be stopped; unclaimed ones are only reported. Swept every five minutes.",
     readOnly: true,
   },
-  () => task(async () => ({ strays: await strays.find(RULES) })),
+  () => task(async () => ({ strays: await strays.look(RULES, live) })),
 )
 
 const sweepStrays = tool(
@@ -742,7 +788,7 @@ const sweepStrays = tool(
   },
   (input) =>
     task(async () => {
-      const found = await strays.find(RULES)
+      const found = await strays.look(RULES, live)
       const { pids } = input
       const chosen =
         pids === undefined
