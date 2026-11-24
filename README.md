@@ -1,3 +1,5 @@
+**Moved to [zachsents/switch](https://github.com/zachsents/switch/tree/main/extensions/macos).** This repo is archived.
+
 # switch-ext-macos
 
 A Mac as the agent's body: shell commands and files, vitals and load, what the Mac is (sleep, automation grants, prompts waiting), attention and the moment, screenshots and driving any app's interface (a Swift helper does Accessibility and input), plus upkeep: the disk (what holds it, a low-disk forecast, and make_room when asked), stray processes, protected folders. On the user's own laptop (its host provides `personal`) it refuses heavy commands and driving apps unless they asked. One runs on every Mac. Widget: vitals.
